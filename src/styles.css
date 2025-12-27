@@ -1,3 +1,5 @@
+/* src/styles.css — FULL REPLACEMENT */
+
 :root {
   --bg: #0b0f17;
   --panel: #101827;
@@ -11,6 +13,7 @@
 
 * { box-sizing: border-box; }
 html, body { height: 100%; }
+
 body {
   margin: 0;
   background: radial-gradient(1200px 800px at 20% 10%, #122040 0%, var(--bg) 45%, #070a10 100%);
@@ -18,12 +21,10 @@ body {
   font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
 }
 
-button, input {
-  font: inherit;
-}
-
+button, input { font: inherit; }
 a { color: var(--accent); }
 
+/* Layout shell */
 .shell {
   min-height: 100dvh;
   padding: env(safe-area-inset-top) 16px env(safe-area-inset-bottom) 16px;
@@ -32,6 +33,7 @@ a { color: var(--accent); }
   justify-content: center;
 }
 
+/* Generic card */
 .card {
   width: min(680px, 100%);
   background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02));
@@ -54,18 +56,19 @@ a { color: var(--accent); }
   margin: 0 0 8px 0;
   letter-spacing: 0.2px;
 }
+
 .p {
   margin: 0 0 14px 0;
   color: var(--muted);
   line-height: 1.35;
 }
 
+/* Category grid */
 .grid {
   display: grid;
   grid-template-columns: 1fr;
   gap: 10px;
 }
-
 @media (min-width: 620px) {
   .grid { grid-template-columns: 1fr 1fr; }
 }
@@ -83,8 +86,9 @@ a { color: var(--accent); }
   transform: translateY(-1px);
   border-color: rgba(110,168,255,0.55);
 }
+
 .catTitle { font-weight: 700; margin: 0 0 6px 0; }
-.catMeta { margin: 0; color: var(--muted); font-size: 13px; }
+.catMeta  { margin: 0; color: var(--muted); font-size: 13px; }
 
 .smallRow {
   display: flex;
@@ -127,9 +131,9 @@ a { color: var(--accent); }
   background: rgba(255,255,255,0.05);
   color: var(--text);
 }
-
 .btn:active { transform: translateY(1px); }
 
+/* Existing prompt styles (kept for compatibility) */
 .bigPromptWrap {
   margin-top: 14px;
   border-radius: 18px;
@@ -155,6 +159,7 @@ a { color: var(--accent); }
   margin-top: 10px;
 }
 
+/* Results KPIs */
 .kpiRow {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -172,6 +177,7 @@ a { color: var(--accent); }
 .kpiLabel { color: var(--muted); font-size: 12px; margin: 0 0 6px 0; }
 .kpiValue { margin: 0; font-size: 18px; font-weight: 800; }
 
+/* Results list */
 .list {
   margin: 12px 0 0 0;
   padding: 0;
@@ -190,6 +196,7 @@ a { color: var(--accent); }
   background: rgba(255,255,255,0.03);
   padding: 10px 12px;
 }
+
 .badge {
   font-size: 12px;
   padding: 6px 10px;
@@ -198,4 +205,143 @@ a { color: var(--accent); }
   color: var(--muted);
 }
 .badge.good { border-color: rgba(49,208,127,0.5); color: #baf3d7; }
-.badge.bad { border-color: rgba(255,93,93,0.5); color: #ffd0d0; }
+.badge.bad  { border-color: rgba(255,93,93,0.5); color: #ffd0d0; }
+
+/* -------------------------------------------------------
+   NEW: Setup + Play screen styling for tilt-first flow
+   (used by the replacement Game.jsx I provided)
+-------------------------------------------------------- */
+
+/* Setup screen container */
+.gameSetup {
+  width: 100%;
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.setupHeader { margin-bottom: 14px; }
+
+.setupTitle {
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+.setupSub {
+  margin-top: 6px;
+  opacity: 0.85;
+  font-size: 14px;
+}
+
+.setupCard {
+  border-radius: 18px;
+  padding: 18px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(12px);
+}
+
+.setupRow {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.setupRow:last-child { border-bottom: none; }
+
+.setupLabel { opacity: 0.8; font-size: 13px; }
+
+.setupValue {
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.setupButtons {
+  display: flex;
+  gap: 10px;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+
+.primaryBtn {
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.10);
+  color: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.ghostBtn {
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.setupError {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 90, 90, 0.35);
+  background: rgba(255, 90, 90, 0.10);
+  font-size: 13px;
+}
+
+/* Play screen (big word for landscape) */
+.playScreen {
+  width: 100%;
+  height: 100%;
+  min-height: calc(100vh - 40px);
+  display: flex;
+  flex-direction: column;
+  padding: 18px;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.topBar {
+  position: fixed;
+  top: 14px;
+  left: 14px;
+  right: 14px;
+  display: flex;
+  justify-content: space-between;
+  pointer-events: none;
+}
+
+/* Note: reusing existing .pill class for category chip */
+.timer {
+  pointer-events: none;
+  padding: 8px 12px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(10px);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.bigWord {
+  font-weight: 800;
+  line-height: 1.05;
+  letter-spacing: 0.5px;
+  padding: 0 14px;
+
+  /* Very large word for landscape */
+  font-size: clamp(48px, 9vw, 120px);
+}
+
+/* Slightly different hint style on play screen; safe to reuse name */
+.playScreen .hint {
+  margin-top: 18px;
+  font-size: 14px;
+  opacity: 0.8;
+}
+.playScreen .hint.warn { opacity: 0.95; }
