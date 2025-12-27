@@ -1,59 +1,130 @@
 // src/utils/motion.js
+// Robust tilt detection for iOS Safari in both portrait + landscape.
+//
+// Actions emitted:
+// - "correct" (tilt DOWN / forward)
+// - "pass" (tilt UP / backward)
+//
+// Uses a deadzone + hysteresis so it's not ultra-sensitive.
+
+const DEFAULTS = {
+  thresholdDeg: 26,     // higher = less sensitive
+  neutralDeg: 10,       // must return near neutral to "re-arm"
+  minIntervalMs: 650,   // debounce between actions
+  smoothing: 0.22,      // EMA smoothing (0..1), higher = less smoothing
+};
 
 export async function requestMotionPermission() {
-  // iOS Safari requires a user gesture to request permission
-  if (
-    typeof DeviceOrientationEvent !== "undefined" &&
-    typeof DeviceOrientationEvent.requestPermission === "function"
-  ) {
-    const res = await DeviceOrientationEvent.requestPermission();
-    return res; // "granted" | "denied"
+  // iOS Safari requires permission request from a user gesture.
+  try {
+    if (
+      typeof DeviceOrientationEvent !== "undefined" &&
+      typeof DeviceOrientationEvent.requestPermission === "function"
+    ) {
+      const res = await DeviceOrientationEvent.requestPermission();
+      return res === "granted";
+    }
+    // Other browsers: no permission prompt needed
+    return true;
+  } catch {
+    return false;
   }
-  // Android / desktop typically don't require explicit permission
-  return "granted";
 }
 
-export function getScreenAngle() {
-  // Prefer modern Screen Orientation API
-  if (window.screen && window.screen.orientation && typeof window.screen.orientation.angle === "number") {
-    return window.screen.orientation.angle; // 0, 90, 180, 270
-  }
+function getScreenAngle() {
+  // Normalize to {0,90,180,270}
+  const raw =
+    (screen?.orientation?.angle ??
+      window.orientation ??
+      0);
 
-  // Fallback (older iOS)
-  const w = window.orientation;
-  if (typeof w === "number") {
-    // can be 0, 90, -90, 180
-    return ((w % 360) + 360) % 360;
-  }
-
+  const a = ((raw % 360) + 360) % 360;
+  if (a === 90 || a === 180 || a === 270) return a;
   return 0;
 }
 
-/**
- * Convert DeviceOrientationEvent (beta/gamma) into a single "pitch" value
- * that represents tilting "up vs down" relative to the CURRENT screen orientation.
- *
- * - In portrait (0): pitch ~= beta
- * - In landscape (90): pitch ~= -gamma
- * - In portrait upside-down (180): pitch ~= -beta
- * - In landscape other side (270): pitch ~= gamma
- */
-export function toPitch(beta, gamma, angle) {
-  // beta: front/back tilt (range ~[-180,180])
-  // gamma: left/right tilt (range ~[-90,90])
+function computePitchDeg(beta, gamma) {
+  // beta: front-back tilt in portrait
+  // gamma: left-right tilt in portrait
+  //
+  // When rotating to landscape, the "forward/back" axis roughly maps to gamma.
+  // We also flip sign depending on which landscape direction.
+  const angle = getScreenAngle();
+  const isLandscape = angle === 90 || angle === 270;
 
-  if (typeof beta !== "number" || typeof gamma !== "number") return 0;
-
-  switch (angle) {
-    case 0:
-      return beta;
-    case 180:
-      return -beta;
-    case 90:
-      return -gamma;
-    case 270:
-      return gamma;
-    default:
-      return beta;
+  if (!isLandscape) {
+    // Portrait: beta is pitch (front/back)
+    return beta ?? 0;
   }
+
+  // Landscape:
+  // angle 90 vs 270 flips sign for what "forward" means.
+  const g = gamma ?? 0;
+  if (angle === 90) return -g;
+  return g; // angle 270
+}
+
+export function startTiltListener(onAction, options = {}) {
+  const cfg = { ...DEFAULTS, ...options };
+
+  let enabled = true;
+  let armed = true;
+  let lastActionAt = 0;
+
+  // Exponential moving average to reduce jitter
+  let emaPitch = 0;
+  let emaInit = false;
+
+  function handle(e) {
+    if (!enabled) return;
+
+    const beta = typeof e.beta === "number" ? e.beta : 0;
+    const gamma = typeof e.gamma === "number" ? e.gamma : 0;
+
+    const pitch = computePitchDeg(beta, gamma);
+
+    if (!emaInit) {
+      emaPitch = pitch;
+      emaInit = true;
+    } else {
+      emaPitch = emaPitch + cfg.smoothing * (pitch - emaPitch);
+    }
+
+    const now = Date.now();
+
+    // Re-arm once back in neutral zone
+    if (!armed) {
+      if (Math.abs(emaPitch) <= cfg.neutralDeg) {
+        armed = true;
+      }
+      return;
+    }
+
+    // Debounce
+    if (now - lastActionAt < cfg.minIntervalMs) return;
+
+    // Decide action
+    if (emaPitch >= cfg.thresholdDeg) {
+      // Tilt DOWN/forward
+      armed = false;
+      lastActionAt = now;
+      onAction("correct");
+      return;
+    }
+
+    if (emaPitch <= -cfg.thresholdDeg) {
+      // Tilt UP/backward
+      armed = false;
+      lastActionAt = now;
+      onAction("pass");
+      return;
+    }
+  }
+
+  window.addEventListener("deviceorientation", handle, true);
+
+  return function stop() {
+    enabled = false;
+    window.removeEventListener("deviceorientation", handle, true);
+  };
 }

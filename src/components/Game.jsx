@@ -1,254 +1,288 @@
 // src/components/Game.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { getScreenAngle, requestMotionPermission, toPitch } from "../utils/motion.js";
-import { shuffle } from "../utils/shuffle.js";
+import { requestMotionPermission, startTiltListener } from "../utils/motion.js";
+import { shuffleArray } from "../utils/shuffle.js";
 
-export default function Game({ categoryKey, categories, roundSeconds, onFinish, onQuit }) {
-  const category = categories?.[categoryKey];
-  const categoryName = category?.name ?? "Category";
+function resolveCategory(categories, categoryKey) {
+  if (!categories || !categoryKey) return null;
 
-  const prompts = useMemo(() => {
-    const list = category?.prompts ?? [];
-    return shuffle([...list]); // fresh order each round
-  }, [categoryKey]);
+  // If categories is an object map: { popCulture: { name, words: [...] }, ... }
+  if (!Array.isArray(categories) && typeof categories === "object") {
+    return categories[categoryKey] || null;
+  }
 
-  // Flow:
-  // 1) Setup screen (Enable Tilt) - timer NOT running
-  // 2) Play screen - timer starts and big word shows
-  const [phase, setPhase] = useState("setup"); // "setup" | "play"
+  // If categories is an array: [{ key, name, words }, ...]
+  if (Array.isArray(categories)) {
+    return (
+      categories.find((c) => c.key === categoryKey || c.id === categoryKey) || null
+    );
+  }
+
+  return null;
+}
+
+function resolveWords(cat) {
+  if (!cat) return [];
+  // Common shapes
+  if (Array.isArray(cat.words)) return cat.words;
+  if (Array.isArray(cat.prompts)) return cat.prompts;
+  if (Array.isArray(cat.items)) return cat.items;
+  // If cat itself is an array
+  if (Array.isArray(cat)) return cat;
+  return [];
+}
+
+export default function Game({
+  categoryKey,
+  categories,
+  roundSeconds,
+  onFinish,
+  onQuit,
+}) {
+  const cat = useMemo(
+    () => resolveCategory(categories, categoryKey),
+    [categories, categoryKey]
+  );
+
+  const categoryName = cat?.name || cat?.title || categoryKey || "Category";
+  const baseWords = useMemo(() => resolveWords(cat), [cat]);
+  const hasWords = baseWords.length > 0;
+
+  // Setup stage vs running stage
+  const [tiltEnabled, setTiltEnabled] = useState(false);
+  const [permissionGranted, setPermissionGranted] = useState(false);
+
+  // Round state (starts when tilt enabled)
   const [secondsLeft, setSecondsLeft] = useState(roundSeconds);
+  const [deck, setDeck] = useState([]);
   const [idx, setIdx] = useState(0);
-  const [history, setHistory] = useState([]); // { word, outcome: "correct"|"pass", t }
-  const [error, setError] = useState("");
+  const [log, setLog] = useState([]); // [{ word, verdict: "correct"|"pass", ts }]
 
-  // Sensitivity / gating
-  const TILT_THRESHOLD = 22;   // bigger = less sensitive
-  const NEUTRAL_THRESHOLD = 12; // must return near-neutral before next action
-  const COOLDOWN_MS = 900;
+  const timerRef = useRef(null);
+  const stopTiltRef = useRef(null);
 
-  const enabledRef = useRef(false);
-  const armedRef = useRef(true);
-  const lastActionMsRef = useRef(0);
+  const currentWord = deck[idx] || "";
 
-  const promptsRef = useRef(prompts);
-  const idxRef = useRef(idx);
-
-  useEffect(() => { promptsRef.current = prompts; }, [prompts]);
-  useEffect(() => { idxRef.current = idx; }, [idx]);
-
-  // Reset when category changes
+  // Reset whenever category changes
   useEffect(() => {
-    setPhase("setup");
+    // cleanup
+    if (timerRef.current) clearInterval(timerRef.current);
+    timerRef.current = null;
+
+    if (stopTiltRef.current) stopTiltRef.current();
+    stopTiltRef.current = null;
+
+    setTiltEnabled(false);
+    setPermissionGranted(false);
+
     setSecondsLeft(roundSeconds);
+    setDeck([]);
     setIdx(0);
-    setHistory([]);
-    setError("");
-    enabledRef.current = false;
-    armedRef.current = true;
-    lastActionMsRef.current = 0;
+    setLog([]);
   }, [categoryKey, roundSeconds]);
 
-  const currentWord = prompts?.[idx] ?? "";
+  async function enableTiltAndStart() {
+    if (!hasWords) return;
 
-  function record(outcome) {
-    const list = promptsRef.current;
-    const i = idxRef.current;
-    const word = list?.[i] ?? "";
+    const ok = await requestMotionPermission();
+    setPermissionGranted(ok);
 
-    if (!word) return;
+    if (!ok) {
+      // Keep on setup screen; user can retry
+      return;
+    }
 
-    setHistory((prev) => [...prev, { word, outcome, t: Date.now() }]);
-
-    setIdx((prev) => {
-      const next = list.length ? (prev + 1) % list.length : 0;
-      idxRef.current = next;
-      return next;
-    });
+    // Start round now
+    const shuffled = shuffleArray([...baseWords]);
+    setDeck(shuffled);
+    setIdx(0);
+    setLog([]);
+    setSecondsLeft(roundSeconds);
+    setTiltEnabled(true);
   }
 
-  function stopTilt() {
-    if (!enabledRef.current) return;
-    enabledRef.current = false;
-    window.removeEventListener("deviceorientation", onOrientation, true);
-  }
+  function finishRound(reason = "time") {
+    // stop listeners
+    if (timerRef.current) clearInterval(timerRef.current);
+    timerRef.current = null;
 
-  function finishRound() {
-    stopTilt();
+    if (stopTiltRef.current) stopTiltRef.current();
+    stopTiltRef.current = null;
 
-    const correctWords = history.filter((h) => h.outcome === "correct").map((h) => h.word);
-    const passedWords = history.filter((h) => h.outcome === "pass").map((h) => h.word);
+    const correctWords = log.filter((x) => x.verdict === "correct").map((x) => x.word);
+    const passedWords = log.filter((x) => x.verdict === "pass").map((x) => x.word);
 
     const result = {
+      reason,
       categoryKey,
       categoryName,
-      roundSeconds,
-      total: history.length,
+      seconds: roundSeconds,
+      total: log.length,
       correctCount: correctWords.length,
       passCount: passedWords.length,
       correctWords,
       passedWords,
-      history,
+      history: log,
     };
 
     onFinish(result);
   }
 
-  // Timer only runs in PLAY phase
+  // Start timer + tilt listener only after tiltEnabled
   useEffect(() => {
-    if (phase !== "play") return;
-    if (secondsLeft <= 0) {
-      finishRound();
-      return;
-    }
+    if (!tiltEnabled) return;
 
-    const id = setTimeout(() => {
-      setSecondsLeft((s) => s - 1);
+    // Timer
+    timerRef.current = setInterval(() => {
+      setSecondsLeft((s) => {
+        if (s <= 1) return 0;
+        return s - 1;
+      });
     }, 1000);
 
-    return () => clearTimeout(id);
+    // Tilt listener (debounced/hysteresis in motion.js)
+    stopTiltRef.current = startTiltListener((action) => {
+      // action is "correct" or "pass"
+
+      // Use functional updates so we log the correct word (no repeats)
+      setDeck((d) => d); // no-op, keeps state stable
+      setIdx((i) => {
+        const word = deck[i] || ""; // NOTE: deck from closure can be stale
+        return i;
+      });
+
+      // To avoid stale closure issues, derive word from latest state using refs
+    });
+
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+      timerRef.current = null;
+
+      if (stopTiltRef.current) stopTiltRef.current();
+      stopTiltRef.current = null;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, secondsLeft]);
+  }, [tiltEnabled]);
 
-  // Orientation handler (needs stable reference)
-  function onOrientation(e) {
-    if (!enabledRef.current) return;
-
-    const now = Date.now();
-    const beta = e.beta;
-    const gamma = e.gamma;
-
-    const angle = getScreenAngle();
-    let pitch = toPitch(beta, gamma, angle);
-
-    // If user is holding phone to forehead, pitch will fluctuate.
-    // Gate: must come back near neutral between actions.
-    if (Math.abs(pitch) < NEUTRAL_THRESHOLD) {
-      armedRef.current = true;
-      return;
-    }
-
-    if (!armedRef.current) return;
-    if (now - lastActionMsRef.current < COOLDOWN_MS) return;
-
-    // Determine action
-    // Convention: tilt DOWN = correct, tilt UP = pass
-    // If yours feels reversed, swap the comparisons below.
-    if (pitch > TILT_THRESHOLD) {
-      lastActionMsRef.current = now;
-      armedRef.current = false;
-      record("correct");
-      return;
-    }
-
-    if (pitch < -TILT_THRESHOLD) {
-      lastActionMsRef.current = now;
-      armedRef.current = false;
-      record("pass");
-      return;
-    }
-  }
-
-  async function enableTiltAndStart() {
-    setError("");
-
-    const perm = await requestMotionPermission();
-    if (perm !== "granted") {
-      setError("Motion permission was denied. Enable it in iPhone Settings > Safari > Motion & Orientation Access.");
-      return;
-    }
-
-    if (!promptsRef.current.length) {
-      setError("No prompts found in this category.");
-      return;
-    }
-
-    // Start round now (timer begins only after this)
-    setSecondsLeft(roundSeconds);
-    setIdx(0);
-    idxRef.current = 0;
-    setHistory([]);
-    armedRef.current = true;
-    lastActionMsRef.current = 0;
-
-    enabledRef.current = true;
-    window.addEventListener("deviceorientation", onOrientation, true);
-
-    setPhase("play");
-  }
-
-  // Cleanup on unmount
+  // Refs to avoid stale closures for deck/idx
+  const deckRef = useRef(deck);
+  const idxRef = useRef(idx);
   useEffect(() => {
-    return () => stopTilt();
+    deckRef.current = deck;
+  }, [deck]);
+  useEffect(() => {
+    idxRef.current = idx;
+  }, [idx]);
+
+  // Install tilt listener using refs (stable + correct logging)
+  useEffect(() => {
+    if (!tiltEnabled) return;
+
+    // Replace any previous listener (safety)
+    if (stopTiltRef.current) stopTiltRef.current();
+
+    stopTiltRef.current = startTiltListener((action) => {
+      const d = deckRef.current;
+      const i = idxRef.current;
+      const word = d[i];
+
+      if (!word) return;
+
+      setLog((prev) => [...prev, { word, verdict: action, ts: Date.now() }]);
+
+      // Advance to next word
+      setIdx((prevIdx) => {
+        const next = prevIdx + 1;
+        if (next >= d.length) return 0; // loop deck
+        return next;
+      });
+    });
+
+    return () => {
+      if (stopTiltRef.current) stopTiltRef.current();
+      stopTiltRef.current = null;
+    };
+  }, [tiltEnabled]);
+
+  // When timer hits 0, end round
+  useEffect(() => {
+    if (!tiltEnabled) return;
+    if (secondsLeft === 0) finishRound("time");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [secondsLeft, tiltEnabled]);
 
-  // ---------- UI ----------
-
-  if (phase === "setup") {
+  // SETUP SCREEN (no timer running yet)
+  if (!tiltEnabled) {
     return (
-      <div className="shell">
-        <div className="card gameSetup">
-          <div className="setupHeader">
-            <div className="h1 setupTitle">{categoryName}</div>
-            <p className="p setupSub">
-              Timer will start only after you tap <b>Enable Tilt</b>.
-              Turn OFF iPhone orientation lock for landscape testing.
+      <div className="card">
+        <h1 className="h1">{categoryName}</h1>
+        <p className="p">
+          Timer will start only after you tap <b>Enable Tilt</b>. Turn OFF iPhone orientation
+          lock for landscape testing.
+        </p>
+
+        <div className="kpiRow">
+          <div className="kpi">
+            <p className="kpiLabel">Round time</p>
+            <p className="kpiValue">{roundSeconds}s</p>
+          </div>
+          <div className="kpi">
+            <p className="kpiLabel">How to play</p>
+            <p className="kpiValue" style={{ fontSize: 14, fontWeight: 600 }}>
+              Hold the phone to your forehead. Tilt <b>DOWN</b> = Correct. Tilt <b>UP</b> = Pass.
             </p>
           </div>
-
-          <div className="setupCard">
-            <div className="setupRow">
-              <div className="setupLabel">Round time</div>
-              <div className="setupValue">{roundSeconds}s</div>
-            </div>
-
-            <div className="setupRow">
-              <div className="setupLabel">How to play</div>
-              <div className="setupValue">
-                Hold the phone to your forehead. Tilt <b>DOWN</b> = Correct. Tilt <b>UP</b> = Pass.
-              </div>
-            </div>
-
-            <div className="setupButtons">
-              <button className="primaryBtn" onClick={enableTiltAndStart}>
-                Enable Tilt
-              </button>
-              <button className="ghostBtn" onClick={onQuit}>
-                Back
-              </button>
-            </div>
-
-            {error ? <div className="setupError">{error}</div> : null}
+          <div className="kpi">
+            <p className="kpiLabel">Prompts</p>
+            <p className="kpiValue">{baseWords.length}</p>
           </div>
         </div>
+
+        <div className="smallRow">
+          <button className="btn primary" onClick={enableTiltAndStart} disabled={!hasWords}>
+            Enable Tilt
+          </button>
+          <button className="btn" onClick={onQuit}>Back</button>
+        </div>
+
+        {!hasWords && (
+          <div className="pill danger" style={{ marginTop: 12 }}>
+            No prompts found in this category.
+          </div>
+        )}
+
+        {!permissionGranted && (
+          <div className="hint" style={{ marginTop: 10 }}>
+            If iOS asks for Motion & Orientation access, tap Allow.
+          </div>
+        )}
       </div>
     );
   }
 
-  // PLAY PHASE
+  // RUNNING SCREEN (big word, landscape-friendly)
   return (
-    <div className="shell">
-      <div className="playScreen">
-        <div className="topBar">
+    <div className="card">
+      <div className="row">
+        <div>
           <div className="pill">{categoryName}</div>
-          <div className="timer">{secondsLeft}s</div>
         </div>
+        <div className="pill primary">{secondsLeft}s</div>
+      </div>
 
-        <div className="bigWord">{currentWord}</div>
+      <div className="bigPromptWrap">
+        <p className="bigPrompt">{currentWord}</p>
+      </div>
 
-        <div className="hint warn">
-          Tilt <b>DOWN</b> = Correct • Tilt <b>UP</b> = Pass
-        </div>
+      <p className="hint">
+        Tilt DOWN = Correct • Tilt UP = Pass
+      </p>
 
-        {/* No Pass/Correct buttons (per your request) */}
-        <div className="smallRow" style={{ marginTop: 18 }}>
-          <button className="btn danger" onClick={finishRound}>
-            End Round
-          </button>
-          <button className="btn" onClick={onQuit}>
-            Quit
-          </button>
-        </div>
+      {/* Buttons removed per your request while we troubleshoot tilt */}
+      <div className="smallRow" style={{ justifyContent: "center" }}>
+        <button className="btn danger" onClick={() => finishRound("manual")}>
+          End Round
+        </button>
       </div>
     </div>
   );
