@@ -1,77 +1,59 @@
 // src/utils/motion.js
+
 export async function requestMotionPermission() {
-  try {
-    const DME = window.DeviceMotionEvent;
-    if (DME && typeof DME.requestPermission === "function") {
-      const res = await DME.requestPermission();
-      return res === "granted";
-    }
-    return true;
-  } catch {
-    return false;
+  // iOS Safari requires a user gesture to request permission
+  if (
+    typeof DeviceOrientationEvent !== "undefined" &&
+    typeof DeviceOrientationEvent.requestPermission === "function"
+  ) {
+    const res = await DeviceOrientationEvent.requestPermission();
+    return res; // "granted" | "denied"
   }
+  // Android / desktop typically don't require explicit permission
+  return "granted";
+}
+
+export function getScreenAngle() {
+  // Prefer modern Screen Orientation API
+  if (window.screen && window.screen.orientation && typeof window.screen.orientation.angle === "number") {
+    return window.screen.orientation.angle; // 0, 90, 180, 270
+  }
+
+  // Fallback (older iOS)
+  const w = window.orientation;
+  if (typeof w === "number") {
+    // can be 0, 90, -90, 180
+    return ((w % 360) + 360) % 360;
+  }
+
+  return 0;
 }
 
 /**
- * Uses deviceorientation beta (pitch). Calibrates baseline at start.
- * Requires returning to neutral before firing again + cooldown.
+ * Convert DeviceOrientationEvent (beta/gamma) into a single "pitch" value
+ * that represents tilting "up vs down" relative to the CURRENT screen orientation.
+ *
+ * - In portrait (0): pitch ~= beta
+ * - In landscape (90): pitch ~= -gamma
+ * - In portrait upside-down (180): pitch ~= -beta
+ * - In landscape other side (270): pitch ~= gamma
  */
-export function startTiltListener({
-  onCorrect,
-  onPass,
-  correctDelta = 26,
-  passDelta = 26,
-  deadZone = 14,
-  cooldownMs = 900
-} = {}) {
-  let baseline = null;
-  let armed = true;
-  let lastFire = 0;
+export function toPitch(beta, gamma, angle) {
+  // beta: front/back tilt (range ~[-180,180])
+  // gamma: left/right tilt (range ~[-90,90])
 
-  function inNeutral(delta) {
-    return Math.abs(delta) <= deadZone;
+  if (typeof beta !== "number" || typeof gamma !== "number") return 0;
+
+  switch (angle) {
+    case 0:
+      return beta;
+    case 180:
+      return -beta;
+    case 90:
+      return -gamma;
+    case 270:
+      return gamma;
+    default:
+      return beta;
   }
-
-  function handleOrientation(e) {
-    const beta = typeof e.beta === "number" ? e.beta : null;
-    if (beta == null) return;
-
-    if (baseline === null) {
-      baseline = beta; // calibrate on first reading after enable
-      return;
-    }
-
-    const now = Date.now();
-    if (now - lastFire < cooldownMs) return;
-
-    const delta = beta - baseline;
-
-    // Must return to neutral before next trigger
-    if (!armed) {
-      if (inNeutral(delta)) armed = true;
-      return;
-    }
-
-    // Down tilt -> Correct (delta positive on most iPhones in portrait)
-    if (delta >= correctDelta) {
-      armed = false;
-      lastFire = now;
-      onCorrect?.();
-      return;
-    }
-
-    // Up tilt -> Pass
-    if (delta <= -passDelta) {
-      armed = false;
-      lastFire = now;
-      onPass?.();
-      return;
-    }
-  }
-
-  window.addEventListener("deviceorientation", handleOrientation, true);
-
-  return () => {
-    window.removeEventListener("deviceorientation", handleOrientation, true);
-  };
 }
