@@ -1,175 +1,141 @@
+// src/components/Game.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import ScreenShell from "./ScreenShell.jsx";
-import { shuffle } from "../utils/shuffle.js";
-import { createTiltDetector, requestMotionPermissionIfNeeded } from "../utils/motion.js";
-
-function vibrate(pattern = 50) {
-  try {
-    navigator.vibrate?.(pattern);
-  } catch {
-    // ignore
-  }
-}
+import { shuffle } from "../utils/shuffle";
+import { requestMotionPermission, startTiltListener } from "../utils/motion";
 
 export default function Game({ categoryKey, categories, roundSeconds, onFinish, onQuit }) {
-  const category = categories[categoryKey];
+  const category = categories?.[categoryKey];
+  const words = useMemo(() => {
+    const list = category?.words ? [...category.words] : [];
+    return shuffle(list);
+  }, [categoryKey, category?.words]);
 
-  const deck = useMemo(() => shuffle(category.words), [category.words]);
   const [idx, setIdx] = useState(0);
+  const [timeLeft, setTimeLeft] = useState(Number(roundSeconds) || 60);
 
-  const [timeLeft, setTimeLeft] = useState(roundSeconds);
-  const [status, setStatus] = useState("ready"); // ready | playing | ended
-  const [motionAllowed, setMotionAllowed] = useState(null); // null | true | false
+  const [correctWords, setCorrectWords] = useState([]);
+  const [passedWords, setPassedWords] = useState([]);
 
-  const [events, setEvents] = useState([]); // {word, result: 'correct'|'pass'}
+  const [tiltEnabled, setTiltEnabled] = useState(false);
+  const stopTiltRef = useRef(null);
 
-  const tiltRef = useRef(null);
-  const timerRef = useRef(null);
+  const currentWord = words[idx] ?? "";
 
-  const word = deck[idx] ?? "Out of cards";
+  // If category is missing, fail gracefully instead of blank screen
+  useEffect(() => {
+    if (!category) {
+      onQuit?.();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [categoryKey]);
 
-  const nextCard = () => setIdx((v) => Math.min(v + 1, deck.length));
+  // Timer
+  useEffect(() => {
+    if (timeLeft <= 0) return;
+    const t = setInterval(() => setTimeLeft((s) => s - 1), 1000);
+    return () => clearInterval(t);
+  }, [timeLeft]);
 
-  const mark = (result) => {
-    if (status !== "playing") return;
-    if (!deck[idx]) return;
+  // End round
+  useEffect(() => {
+    if (timeLeft > 0) return;
 
-    setEvents((prev) => [...prev, { word: deck[idx], result }]);
-    vibrate(result === "correct" ? [30, 40, 30] : 60);
-    nextCard();
+    if (stopTiltRef.current) {
+      stopTiltRef.current();
+      stopTiltRef.current = null;
+    }
+
+    const result = {
+      categoryName: category?.name ?? categoryKey,
+      roundSeconds: Number(roundSeconds) || 60,
+      correct: correctWords.length,
+      passed: passedWords.length,
+      total: correctWords.length + passedWords.length,
+      correctWords,
+      passedWords
+    };
+
+    onFinish?.(result);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timeLeft]);
+
+  const nextWord = () => {
+    setIdx((i) => (i + 1 >= words.length ? 0 : i + 1));
   };
 
-  const endRound = () => {
-    setStatus("ended");
-    try { tiltRef.current?.stop(); } catch {}
-    clearInterval(timerRef.current);
-
-    const correct = events.filter((e) => e.result === "correct").length;
-    const passed = events.filter((e) => e.result === "pass").length;
-
-    onFinish({
-      categoryKey,
-      categoryName: category.name,
-      roundSeconds,
-      correct,
-      passed,
-      total: events.length,
-      events
-    });
+  const markCorrect = () => {
+    if (!currentWord) return;
+    setCorrectWords((arr) => [...arr, currentWord]);
+    nextWord();
   };
 
-  const startRound = async () => {
-    const ok = await requestMotionPermissionIfNeeded();
-    setMotionAllowed(ok);
+  const markPass = () => {
+    if (!currentWord) return;
+    setPassedWords((arr) => [...arr, currentWord]);
+    nextWord();
+  };
 
-    setEvents([]);
-    setIdx(0);
-    setTimeLeft(roundSeconds);
-    setStatus("playing");
+  const enableTilt = async () => {
+    const ok = await requestMotionPermission();
+    if (!ok) {
+      alert("Motion permission was not granted. Tilt will be disabled; use buttons instead.");
+      setTiltEnabled(false);
+      return;
+    }
 
-    // Tilt detector
-    const detector = createTiltDetector({
-      onDown: () => mark("correct"),
-      onUp: () => mark("pass"),
-      thresholdDeg: 35,
-      cooldownMs: 900
+    if (stopTiltRef.current) stopTiltRef.current();
+
+    stopTiltRef.current = startTiltListener({
+      onDown: markCorrect,
+      onUp: markPass,
+      enabled: true
     });
-    tiltRef.current = detector;
-    detector.start();
 
-    // Timer
-    clearInterval(timerRef.current);
-    timerRef.current = setInterval(() => {
-      setTimeLeft((t) => {
-        if (t <= 1) {
-          clearInterval(timerRef.current);
-          // end after state updates settle
-          setTimeout(endRound, 0);
-          return 0;
-        }
-        return t - 1;
-      });
-    }, 1000);
+    setTiltEnabled(true);
   };
 
   useEffect(() => {
     return () => {
-      try { tiltRef.current?.stop(); } catch {}
-      clearInterval(timerRef.current);
+      if (stopTiltRef.current) {
+        stopTiltRef.current();
+        stopTiltRef.current = null;
+      }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  const correctCount = events.filter((e) => e.result === "correct").length;
-  const passCount = events.filter((e) => e.result === "pass").length;
 
   return (
     <ScreenShell
-      title={category.name}
-      subtitle={
-        status === "ready"
-          ? "Tap Start, then hold the phone to your forehead. Tilt DOWN = Correct, tilt UP = Pass."
-          : status === "playing"
-          ? "Keep it moving—tilt for answers."
-          : "Round ended."
-      }
+      title={category?.name ?? "Game"}
+      subtitle="Tilt DOWN = Correct, tilt UP = Pass. Buttons also work."
     >
-      <div className="kpiRow">
-        <div className="kpi">
-          <p className="kpiLabel">Time left</p>
-          <p className="kpiValue">{timeLeft}s</p>
-        </div>
-        <div className="kpi">
-          <p className="kpiLabel">Correct</p>
-          <p className="kpiValue" style={{ color: "var(--good)" }}>{correctCount}</p>
-        </div>
-        <div className="kpi">
-          <p className="kpiLabel">Pass</p>
-          <p className="kpiValue" style={{ color: "var(--bad)" }}>{passCount}</p>
+      <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+        <button className="btn" onClick={onQuit}>Quit</button>
+        <div className="pill">
+          <span className="mono">{timeLeft}s</span>
         </div>
       </div>
 
-      <div className="bigPromptWrap" style={{ marginTop: 14 }}>
-        <p className="bigPrompt">{word}</p>
-        <div className="hint">
-          {status === "ready" ? "Start to begin" : "Tilt down = Correct • Tilt up = Pass"}
-        </div>
-        {motionAllowed === false ? (
-          <div className="hint" style={{ color: "var(--warn)", marginTop: 8 }}>
-            Motion permission denied. Use the buttons below.
-          </div>
-        ) : null}
+      <div className="promptCard" style={{ marginTop: 14 }}>
+        <div className="promptText">{currentWord}</div>
       </div>
 
-      <div className="smallRow" style={{ marginTop: 14 }}>
-        {status !== "playing" ? (
-          <button className="btn primary" onClick={startRound}>
-            Start
+      <div className="row" style={{ gap: 10, marginTop: 14, flexWrap: "wrap" }}>
+        <button className="btn" onClick={markPass}>Pass</button>
+        <button className="btn primary" onClick={markCorrect}>Correct</button>
+        {!tiltEnabled ? (
+          <button className="btn" onClick={enableTilt} title="Tap required on iPhone">
+            Enable Tilt
           </button>
         ) : (
-          <>
-            <button className="btn good" onClick={() => mark("correct")}>
-              Correct
-            </button>
-            <button className="btn danger" onClick={() => mark("pass")}>
-              Pass
-            </button>
-            <button className="btn" onClick={endRound}>
-              End
-            </button>
-          </>
+          <span className="pill">Tilt enabled</span>
         )}
-
-        <button className="btn" onClick={onQuit}>
-          Quit
-        </button>
       </div>
 
-      <div style={{ height: 10 }} />
-      <p className="p" style={{ marginBottom: 0 }}>
-        Note: tilt thresholds vary by how you hold the phone. If it triggers too easily or not enough,
-        adjust <code>thresholdDeg</code> in <code>src/utils/motion.js</code>.
-      </p>
+      <div className="smallRow" style={{ marginTop: 12 }}>
+        <span className="pill">Correct: {correctWords.length}</span>
+        <span className="pill">Pass: {passedWords.length}</span>
+      </div>
     </ScreenShell>
   );
 }

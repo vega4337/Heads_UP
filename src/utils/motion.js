@@ -1,68 +1,79 @@
-// iOS Safari requires an explicit permission request for motion/orientation in many cases.
-export async function requestMotionPermissionIfNeeded() {
-  const DeviceOrientationEventRef = window.DeviceOrientationEvent;
+// src/utils/motion.js
+// Robust motion/orientation listener for iOS Safari + other browsers.
+// IMPORTANT: iOS requires requestPermission() to be called from a user gesture (tap).
 
-  // Older browsers: no permission API.
-  if (!DeviceOrientationEventRef || !DeviceOrientationEventRef.requestPermission) return true;
-
+export async function requestMotionPermission() {
+  // iOS 13+ requires explicit permission for motion/orientation
   try {
-    const res = await DeviceOrientationEventRef.requestPermission();
-    return res === "granted";
-  } catch {
+    const DME = window.DeviceMotionEvent;
+    const DOE = window.DeviceOrientationEvent;
+
+    const needsMotion = DME && typeof DME.requestPermission === "function";
+    const needsOrientation = DOE && typeof DOE.requestPermission === "function";
+
+    // If neither requires permission, we're good.
+    if (!needsMotion && !needsOrientation) return true;
+
+    // Request whichever is available/required. Some iOS versions gate one or both.
+    let ok = true;
+
+    if (needsMotion) {
+      const res = await DME.requestPermission();
+      ok = ok && res === "granted";
+    }
+
+    if (needsOrientation) {
+      const res = await DOE.requestPermission();
+      ok = ok && res === "granted";
+    }
+
+    return ok;
+  } catch (e) {
+    // If the call throws, treat as not granted.
     return false;
   }
 }
 
 /**
- * Tilt detector for "Heads Up" play:
- * - Calibrate baseline beta at start.
- * - If beta increases beyond threshold => "down" (Correct)
- * - If beta decreases beyond threshold => "up" (Pass)
+ * Starts listening for tilt gestures.
+ * Calls onDown() when user tilts DOWN (Correct).
+ * Calls onUp() when user tilts UP (Pass).
+ *
+ * Returns a stop() function.
  */
-export function createTiltDetector({
+export function startTiltListener({
   onDown,
   onUp,
-  thresholdDeg = 35,
-  cooldownMs = 900
+  enabled = true,
+  cooldownMs = 900,
+  downThreshold = 18,
+  upThreshold = -18,
 }) {
-  let baselineBeta = null;
+  if (!enabled) return () => {};
+
   let lastFire = 0;
 
+  // Use deviceorientation beta (front/back tilt). Works well for "forehead" orientation.
   const handler = (e) => {
     const now = Date.now();
     if (now - lastFire < cooldownMs) return;
 
-    // beta: front-to-back tilt in degrees (-180..180)
-    const beta = typeof e.beta === "number" ? e.beta : null;
+    const beta = typeof e.beta === "number" ? e.beta : null; // -180..180
     if (beta === null) return;
 
-    if (baselineBeta === null) {
-      baselineBeta = beta;
-      return;
-    }
-
-    const delta = beta - baselineBeta;
-
-    if (delta > thresholdDeg) {
+    // When phone is held to forehead, beta movement tends to be stable enough for thresholds.
+    if (beta >= downThreshold) {
       lastFire = now;
       onDown?.();
-      return;
-    }
-
-    if (delta < -thresholdDeg) {
+    } else if (beta <= upThreshold) {
       lastFire = now;
       onUp?.();
-      return;
     }
   };
 
-  return {
-    start() {
-      baselineBeta = null; // re-calibrate on start
-      window.addEventListener("deviceorientation", handler, true);
-    },
-    stop() {
-      window.removeEventListener("deviceorientation", handler, true);
-    }
+  window.addEventListener("deviceorientation", handler, { passive: true });
+
+  return () => {
+    window.removeEventListener("deviceorientation", handler);
   };
 }
