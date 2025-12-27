@@ -1,0 +1,201 @@
+:root {
+  --bg: #0b0f17;
+  --panel: #101827;
+  --text: #e7eefc;
+  --muted: #9fb0d0;
+  --accent: #6ea8ff;
+  --good: #31d07f;
+  --bad: #ff5d5d;
+  --warn: #ffd166;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: radial-gradient(1200px 800px at 20% 10%, #122040 0%, var(--bg) 45%, #070a10 100%);
+  color: var(--text);
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+}
+
+button, input {
+  font: inherit;
+}
+
+a { color: var(--accent); }
+
+.shell {
+  min-height: 100dvh;
+  padding: env(safe-area-inset-top) 16px env(safe-area-inset-bottom) 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.card {
+  width: min(680px, 100%);
+  background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02));
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 18px;
+  padding: 18px;
+  box-shadow: 0 12px 40px rgba(0,0,0,0.35);
+}
+
+.row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.h1 {
+  font-size: 22px;
+  font-weight: 700;
+  margin: 0 0 8px 0;
+  letter-spacing: 0.2px;
+}
+.p {
+  margin: 0 0 14px 0;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 10px;
+}
+
+@media (min-width: 620px) {
+  .grid { grid-template-columns: 1fr 1fr; }
+}
+
+.catBtn {
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 14px;
+  padding: 14px 12px;
+  cursor: pointer;
+  text-align: left;
+  transition: transform 120ms ease, border-color 120ms ease;
+}
+.catBtn:hover {
+  transform: translateY(-1px);
+  border-color: rgba(110,168,255,0.55);
+}
+.catTitle { font-weight: 700; margin: 0 0 6px 0; }
+.catMeta { margin: 0; color: var(--muted); font-size: 13px; }
+
+.smallRow {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+.pill {
+  padding: 8px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.04);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.primary {
+  background: linear-gradient(180deg, rgba(110,168,255,0.28), rgba(110,168,255,0.18));
+  border-color: rgba(110,168,255,0.45);
+  color: var(--text);
+}
+
+.danger {
+  background: rgba(255,93,93,0.14);
+  border-color: rgba(255,93,93,0.40);
+}
+
+.good {
+  background: rgba(49,208,127,0.16);
+  border-color: rgba(49,208,127,0.40);
+}
+
+.btn {
+  cursor: pointer;
+  border-radius: 12px;
+  padding: 12px 12px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.05);
+  color: var(--text);
+}
+
+.btn:active { transform: translateY(1px); }
+
+.bigPromptWrap {
+  margin-top: 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(0,0,0,0.18);
+  padding: 18px;
+}
+
+.bigPrompt {
+  font-size: clamp(28px, 6vw, 56px);
+  font-weight: 800;
+  letter-spacing: 0.2px;
+  line-height: 1.02;
+  text-align: center;
+  margin: 0;
+  padding: 18px 10px;
+}
+
+.hint {
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 10px;
+}
+
+.kpiRow {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.kpi {
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.04);
+  padding: 10px;
+}
+
+.kpiLabel { color: var(--muted); font-size: 12px; margin: 0 0 6px 0; }
+.kpiValue { margin: 0; font-size: 18px; font-weight: 800; }
+
+.list {
+  margin: 12px 0 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+
+.item {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(255,255,255,0.03);
+  padding: 10px 12px;
+}
+.badge {
+  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.12);
+  color: var(--muted);
+}
+.badge.good { border-color: rgba(49,208,127,0.5); color: #baf3d7; }
+.badge.bad { border-color: rgba(255,93,93,0.5); color: #ffd0d0; }
