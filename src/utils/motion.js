@@ -1,21 +1,7 @@
 // src/utils/motion.js
-// Robust tilt detection for iOS Safari in both portrait + landscape.
-//
-// Actions emitted:
-// - "correct" (tilt DOWN / forward)
-// - "pass" (tilt UP / backward)
-//
-// Uses a deadzone + hysteresis so it's not ultra-sensitive.
 
-const DEFAULTS = {
-  thresholdDeg: 26,     // higher = less sensitive
-  neutralDeg: 10,       // must return near neutral to "re-arm"
-  minIntervalMs: 650,   // debounce between actions
-  smoothing: 0.22,      // EMA smoothing (0..1), higher = less smoothing
-};
-
+// iOS requires permission for motion/orientation sensors when in Safari / PWA.
 export async function requestMotionPermission() {
-  // iOS Safari requires permission request from a user gesture.
   try {
     if (
       typeof DeviceOrientationEvent !== "undefined" &&
@@ -24,7 +10,7 @@ export async function requestMotionPermission() {
       const res = await DeviceOrientationEvent.requestPermission();
       return res === "granted";
     }
-    // Other browsers: no permission prompt needed
+    // Non-iOS or older iOS: no prompt needed
     return true;
   } catch {
     return false;
@@ -32,99 +18,133 @@ export async function requestMotionPermission() {
 }
 
 function getScreenAngle() {
-  // Normalize to {0,90,180,270}
-  const raw =
-    (screen?.orientation?.angle ??
-      window.orientation ??
-      0);
+  // iOS Safari often supports window.orientation; modern browsers support screen.orientation.angle
+  let a =
+    (typeof screen !== "undefined" &&
+      screen.orientation &&
+      typeof screen.orientation.angle === "number" &&
+      screen.orientation.angle) ??
+    (typeof window !== "undefined" && typeof window.orientation === "number"
+      ? window.orientation
+      : 0);
 
-  const a = ((raw % 360) + 360) % 360;
-  if (a === 90 || a === 180 || a === 270) return a;
-  return 0;
+  // normalize -90 to 270
+  if (a === -90) a = 270;
+  // normalize into 0/90/180/270 where possible
+  if (a !== 0 && a !== 90 && a !== 180 && a !== 270) a = 0;
+  return a;
 }
 
-function computePitchDeg(beta, gamma) {
-  // beta: front-back tilt in portrait
-  // gamma: left-right tilt in portrait
-  //
-  // When rotating to landscape, the "forward/back" axis roughly maps to gamma.
-  // We also flip sign depending on which landscape direction.
-  const angle = getScreenAngle();
-  const isLandscape = angle === 90 || angle === 270;
-
-  if (!isLandscape) {
-    // Portrait: beta is pitch (front/back)
-    return beta ?? 0;
+function pickAxis(beta, gamma, angle) {
+  // Goal: produce a "forward/back" axis that stays consistent across rotation.
+  // Portrait (0): beta is forward/back
+  // Portrait upside down (180): invert beta
+  // Landscape (90): gamma behaves like forward/back
+  // Landscape (270): invert gamma
+  switch (angle) {
+    case 0:
+      return beta;
+    case 180:
+      return -beta;
+    case 90:
+      return gamma;
+    case 270:
+      return -gamma;
+    default:
+      return beta;
   }
-
-  // Landscape:
-  // angle 90 vs 270 flips sign for what "forward" means.
-  const g = gamma ?? 0;
-  if (angle === 90) return -g;
-  return g; // angle 270
 }
 
-export function startTiltListener(onAction, options = {}) {
-  const cfg = { ...DEFAULTS, ...options };
+function clampNumber(n) {
+  return typeof n === "number" && Number.isFinite(n) ? n : null;
+}
 
-  let enabled = true;
-  let armed = true;
+/**
+ * Start listening for tilt actions.
+ *
+ * onAction(direction) => direction is "down" or "up"
+ * onReady() => called once after baseline calibration
+ *
+ * Options:
+ *  thresholdDeg: how far from baseline to count a tilt (larger = less sensitive)
+ *  neutralDeg: how close to baseline to "re-arm" after a tilt
+ *  cooldownMs: minimum time between actions
+ *  smoothing: 0..1 (higher = smoother, less jitter)
+ *  invert: flips up/down interpretation (rarely needed, but available)
+ */
+export function startTiltListener({
+  onAction,
+  onReady,
+  thresholdDeg = 28,
+  neutralDeg = 12,
+  cooldownMs = 700,
+  smoothing = 0.35,
+  invert = false,
+} = {}) {
+  let baseline = null;
   let lastActionAt = 0;
+  let waitingForNeutral = false;
 
-  // Exponential moving average to reduce jitter
-  let emaPitch = 0;
-  let emaInit = false;
+  // simple low-pass filter on delta
+  let smoothedDelta = 0;
 
-  function handle(e) {
-    if (!enabled) return;
+  function handler(e) {
+    const beta = clampNumber(e.beta);
+    const gamma = clampNumber(e.gamma);
+    if (beta == null || gamma == null) return;
 
-    const beta = typeof e.beta === "number" ? e.beta : 0;
-    const gamma = typeof e.gamma === "number" ? e.gamma : 0;
+    const angle = getScreenAngle();
+    const axis = pickAxis(beta, gamma, angle);
 
-    const pitch = computePitchDeg(beta, gamma);
-
-    if (!emaInit) {
-      emaPitch = pitch;
-      emaInit = true;
-    } else {
-      emaPitch = emaPitch + cfg.smoothing * (pitch - emaPitch);
+    // Calibrate baseline on first good sample after starting
+    if (baseline == null) {
+      baseline = axis;
+      smoothedDelta = 0;
+      waitingForNeutral = true; // require neutral once baseline is set
+      if (typeof onReady === "function") onReady();
+      return;
     }
+
+    const rawDelta = axis - baseline;
+
+    // smooth jitter
+    smoothedDelta = smoothedDelta * (1 - smoothing) + rawDelta * smoothing;
 
     const now = Date.now();
 
-    // Re-arm once back in neutral zone
-    if (!armed) {
-      if (Math.abs(emaPitch) <= cfg.neutralDeg) {
-        armed = true;
+    // Must return close to baseline before another action counts
+    if (waitingForNeutral) {
+      if (Math.abs(smoothedDelta) <= neutralDeg) {
+        waitingForNeutral = false;
       }
       return;
     }
 
-    // Debounce
-    if (now - lastActionAt < cfg.minIntervalMs) return;
+    if (now - lastActionAt < cooldownMs) return;
 
-    // Decide action
-    if (emaPitch >= cfg.thresholdDeg) {
-      // Tilt DOWN/forward
-      armed = false;
+    // Apply invert if requested
+    const d = invert ? -smoothedDelta : smoothedDelta;
+
+    // Direction: positive = "down", negative = "up"
+    if (d >= thresholdDeg) {
       lastActionAt = now;
-      onAction("correct");
+      waitingForNeutral = true;
+      onAction?.("down");
       return;
     }
-
-    if (emaPitch <= -cfg.thresholdDeg) {
-      // Tilt UP/backward
-      armed = false;
+    if (d <= -thresholdDeg) {
       lastActionAt = now;
-      onAction("pass");
+      waitingForNeutral = true;
+      onAction?.("up");
       return;
     }
   }
 
-  window.addEventListener("deviceorientation", handle, true);
+  window.addEventListener("deviceorientation", handler, true);
 
-  return function stop() {
-    enabled = false;
-    window.removeEventListener("deviceorientation", handle, true);
+  return {
+    stop() {
+      window.removeEventListener("deviceorientation", handler, true);
+    },
   };
 }

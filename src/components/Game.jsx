@@ -6,30 +6,17 @@ import { shuffleArray } from "../utils/shuffle.js";
 function resolveCategory(categories, categoryKey) {
   if (!categories || !categoryKey) return null;
 
-  // If categories is an object map: { popCulture: { name, words: [...] }, ... }
-  if (!Array.isArray(categories) && typeof categories === "object") {
+  // If categories is an object keyed by categoryKey
+  if (typeof categories === "object" && !Array.isArray(categories)) {
     return categories[categoryKey] || null;
   }
 
-  // If categories is an array: [{ key, name, words }, ...]
+  // If categories is an array of objects
   if (Array.isArray(categories)) {
-    return (
-      categories.find((c) => c.key === categoryKey || c.id === categoryKey) || null
-    );
+    return categories.find((c) => c.key === categoryKey) || null;
   }
 
   return null;
-}
-
-function resolveWords(cat) {
-  if (!cat) return [];
-  // Common shapes
-  if (Array.isArray(cat.words)) return cat.words;
-  if (Array.isArray(cat.prompts)) return cat.prompts;
-  if (Array.isArray(cat.items)) return cat.items;
-  // If cat itself is an array
-  if (Array.isArray(cat)) return cat;
-  return [];
 }
 
 export default function Game({
@@ -39,250 +26,375 @@ export default function Game({
   onFinish,
   onQuit,
 }) {
-  const cat = useMemo(
+  const category = useMemo(
     () => resolveCategory(categories, categoryKey),
     [categories, categoryKey]
   );
 
-  const categoryName = cat?.name || cat?.title || categoryKey || "Category";
-  const baseWords = useMemo(() => resolveWords(cat), [cat]);
-  const hasWords = baseWords.length > 0;
+  const prompts = useMemo(() => {
+    const list =
+      category?.prompts ||
+      category?.words || // tolerate alternate naming
+      [];
+    return Array.isArray(list) ? list : [];
+  }, [category]);
 
-  // Setup stage vs running stage
+  // Stage control
+  // "ready" -> waiting to enable tilt
+  // "playing" -> timer running, tilt active
+  // "done" -> finished (we call onFinish)
+  const [stage, setStage] = useState("ready");
+
+  // Tilt
   const [tiltEnabled, setTiltEnabled] = useState(false);
-  const [permissionGranted, setPermissionGranted] = useState(false);
+  const [tiltStatus, setTiltStatus] = useState("Tilt not enabled.");
+  const [invertTilt, setInvertTilt] = useState(false);
 
-  // Round state (starts when tilt enabled)
+  // Timer
   const [secondsLeft, setSecondsLeft] = useState(roundSeconds);
+
+  // Deck + display
   const [deck, setDeck] = useState([]);
-  const [idx, setIdx] = useState(0);
-  const [log, setLog] = useState([]); // [{ word, verdict: "correct"|"pass", ts }]
+  const [index, setIndex] = useState(0);
 
+  // Stats
+  const [correctCount, setCorrectCount] = useState(0);
+  const [passCount, setPassCount] = useState(0);
+  const [items, setItems] = useState([]); // { word, outcome: "correct"|"pass" }
+
+  // Refs for sensor callbacks (avoid stale closures)
+  const deckRef = useRef([]);
+  const indexRef = useRef(0);
+  const correctRef = useRef(0);
+  const passRef = useRef(0);
+  const itemsRef = useRef([]);
+  const stageRef = useRef(stage);
+
+  const tiltControllerRef = useRef(null);
   const timerRef = useRef(null);
-  const stopTiltRef = useRef(null);
 
-  const currentWord = deck[idx] || "";
-
-  // Reset whenever category changes
   useEffect(() => {
-    // cleanup
-    if (timerRef.current) clearInterval(timerRef.current);
-    timerRef.current = null;
+    stageRef.current = stage;
+  }, [stage]);
 
-    if (stopTiltRef.current) stopTiltRef.current();
-    stopTiltRef.current = null;
+  // Initialize deck when category changes
+  useEffect(() => {
+    const shuffled = shuffleArray(prompts);
+    setDeck(shuffled);
+    setIndex(0);
+
+    setCorrectCount(0);
+    setPassCount(0);
+    setItems([]);
+
+    setSecondsLeft(roundSeconds);
 
     setTiltEnabled(false);
-    setPermissionGranted(false);
+    setTiltStatus("Tilt not enabled.");
+    setStage("ready");
 
-    setSecondsLeft(roundSeconds);
-    setDeck([]);
-    setIdx(0);
-    setLog([]);
-  }, [categoryKey, roundSeconds]);
+    deckRef.current = shuffled;
+    indexRef.current = 0;
+    correctRef.current = 0;
+    passRef.current = 0;
+    itemsRef.current = [];
 
-  async function enableTiltAndStart() {
-    if (!hasWords) return;
+    // cleanup listeners/timer when switching categories
+    stopTilt();
+    stopTimer();
 
-    const ok = await requestMotionPermission();
-    setPermissionGranted(ok);
-
-    if (!ok) {
-      // Keep on setup screen; user can retry
-      return;
-    }
-
-    // Start round now
-    const shuffled = shuffleArray([...baseWords]);
-    setDeck(shuffled);
-    setIdx(0);
-    setLog([]);
-    setSecondsLeft(roundSeconds);
-    setTiltEnabled(true);
-  }
-
-  function finishRound(reason = "time") {
-    // stop listeners
-    if (timerRef.current) clearInterval(timerRef.current);
-    timerRef.current = null;
-
-    if (stopTiltRef.current) stopTiltRef.current();
-    stopTiltRef.current = null;
-
-    const correctWords = log.filter((x) => x.verdict === "correct").map((x) => x.word);
-    const passedWords = log.filter((x) => x.verdict === "pass").map((x) => x.word);
-
-    const result = {
-      reason,
-      categoryKey,
-      categoryName,
-      seconds: roundSeconds,
-      total: log.length,
-      correctCount: correctWords.length,
-      passCount: passedWords.length,
-      correctWords,
-      passedWords,
-      history: log,
-    };
-
-    onFinish(result);
-  }
-
-  // Start timer + tilt listener only after tiltEnabled
-  useEffect(() => {
-    if (!tiltEnabled) return;
-
-    // Timer
-    timerRef.current = setInterval(() => {
-      setSecondsLeft((s) => {
-        if (s <= 1) return 0;
-        return s - 1;
-      });
-    }, 1000);
-
-    // Tilt listener (debounced/hysteresis in motion.js)
-    stopTiltRef.current = startTiltListener((action) => {
-      // action is "correct" or "pass"
-
-      // Use functional updates so we log the correct word (no repeats)
-      setDeck((d) => d); // no-op, keeps state stable
-      setIdx((i) => {
-        const word = deck[i] || ""; // NOTE: deck from closure can be stale
-        return i;
-      });
-
-      // To avoid stale closure issues, derive word from latest state using refs
-    });
-
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-      timerRef.current = null;
-
-      if (stopTiltRef.current) stopTiltRef.current();
-      stopTiltRef.current = null;
-    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tiltEnabled]);
+  }, [categoryKey]);
 
-  // Refs to avoid stale closures for deck/idx
-  const deckRef = useRef(deck);
-  const idxRef = useRef(idx);
+  // Keep refs in sync
   useEffect(() => {
     deckRef.current = deck;
   }, [deck]);
+
   useEffect(() => {
-    idxRef.current = idx;
-  }, [idx]);
+    indexRef.current = index;
+  }, [index]);
 
-  // Install tilt listener using refs (stable + correct logging)
   useEffect(() => {
-    if (!tiltEnabled) return;
+    correctRef.current = correctCount;
+  }, [correctCount]);
 
-    // Replace any previous listener (safety)
-    if (stopTiltRef.current) stopTiltRef.current();
+  useEffect(() => {
+    passRef.current = passCount;
+  }, [passCount]);
 
-    stopTiltRef.current = startTiltListener((action) => {
-      const d = deckRef.current;
-      const i = idxRef.current;
-      const word = d[i];
+  useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
 
-      if (!word) return;
+  function stopTimer() {
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+  }
 
-      setLog((prev) => [...prev, { word, verdict: action, ts: Date.now() }]);
+  function stopTilt() {
+    if (tiltControllerRef.current) {
+      tiltControllerRef.current.stop?.();
+      tiltControllerRef.current = null;
+    }
+  }
 
-      // Advance to next word
-      setIdx((prevIdx) => {
-        const next = prevIdx + 1;
-        if (next >= d.length) return 0; // loop deck
-        return next;
-      });
-    });
+  function finishRound() {
+    stopTilt();
+    stopTimer();
+    setStage("done");
 
-    return () => {
-      if (stopTiltRef.current) stopTiltRef.current();
-      stopTiltRef.current = null;
+    const finalItems = itemsRef.current;
+    const finalCorrect = correctRef.current;
+    const finalPass = passRef.current;
+
+    const result = {
+      categoryKey,
+      categoryName: category?.name || "Category",
+      roundSeconds,
+      total: finalItems.length,
+      correctCount: finalCorrect,
+      passCount: finalPass,
+      correctWords: finalItems.filter((x) => x.outcome === "correct").map((x) => x.word),
+      passedWords: finalItems.filter((x) => x.outcome === "pass").map((x) => x.word),
+      items: finalItems,
     };
-  }, [tiltEnabled]);
 
-  // When timer hits 0, end round
+    onFinish?.(result);
+  }
+
+  function startTimer() {
+    stopTimer();
+    setSecondsLeft(roundSeconds);
+
+    timerRef.current = setInterval(() => {
+      setSecondsLeft((s) => {
+        if (s <= 1) {
+          // time up
+          setTimeout(() => finishRound(), 0);
+          return 0;
+        }
+        return s - 1;
+      });
+    }, 1000);
+  }
+
+  function advanceWithOutcome(outcome) {
+    if (stageRef.current !== "playing") return;
+
+    const d = deckRef.current;
+    const i = indexRef.current;
+
+    if (!d || !d.length) return;
+    if (i < 0 || i >= d.length) return;
+
+    const word = d[i];
+
+    // record
+    const nextItem = { word, outcome };
+    const nextItems = [...itemsRef.current, nextItem];
+    itemsRef.current = nextItems;
+    setItems(nextItems);
+
+    if (outcome === "correct") {
+      const c = correctRef.current + 1;
+      correctRef.current = c;
+      setCorrectCount(c);
+    } else {
+      const p = passRef.current + 1;
+      passRef.current = p;
+      setPassCount(p);
+    }
+
+    // advance index exactly once
+    const nextIndex = i + 1;
+    indexRef.current = nextIndex;
+    setIndex(nextIndex);
+
+    // if ran out of words, finish early
+    if (nextIndex >= d.length) {
+      finishRound();
+    }
+  }
+
+  async function enableTiltAndStart() {
+    if (!deckRef.current.length) return;
+
+    setTiltStatus("Requesting motion permission…");
+    const ok = await requestMotionPermission();
+    if (!ok) {
+      setTiltStatus("Motion permission denied. Enable it in Safari settings and reload.");
+      return;
+    }
+
+    stopTilt(); // in case user taps twice
+    setTiltStatus("Calibrating… hold steady for a moment.");
+
+    // Start listener; it calibrates baseline on first good sensor sample
+    tiltControllerRef.current = startTiltListener({
+      invert: invertTilt,
+      thresholdDeg: 28,
+      neutralDeg: 12,
+      cooldownMs: 700,
+      smoothing: 0.35,
+      onReady: () => {
+        setTiltEnabled(true);
+        setTiltStatus("Tilt enabled. Tilt DOWN = Correct. Tilt UP = Pass.");
+        setStage("playing");
+        startTimer();
+      },
+      onAction: (dir) => {
+        // dir: "down" or "up"
+        // Map to outcomes
+        if (dir === "down") advanceWithOutcome("correct");
+        if (dir === "up") advanceWithOutcome("pass");
+      },
+    });
+  }
+
+  // If invertTilt changes while playing, restart tilt listener to apply it
   useEffect(() => {
-    if (!tiltEnabled) return;
-    if (secondsLeft === 0) finishRound("time");
+    if (stage !== "playing") return;
+    // restart tilt listener with new invert
+    stopTilt();
+    tiltControllerRef.current = startTiltListener({
+      invert: invertTilt,
+      thresholdDeg: 28,
+      neutralDeg: 12,
+      cooldownMs: 700,
+      smoothing: 0.35,
+      onReady: () => {
+        setTiltEnabled(true);
+        setTiltStatus("Tilt enabled. Tilt DOWN = Correct. Tilt UP = Pass.");
+      },
+      onAction: (dir) => {
+        if (dir === "down") advanceWithOutcome("correct");
+        if (dir === "up") advanceWithOutcome("pass");
+      },
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [secondsLeft, tiltEnabled]);
+  }, [invertTilt]);
 
-  // SETUP SCREEN (no timer running yet)
-  if (!tiltEnabled) {
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      stopTilt();
+      stopTimer();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  if (!category) {
     return (
-      <div className="card">
-        <h1 className="h1">{categoryName}</h1>
-        <p className="p">
-          Timer will start only after you tap <b>Enable Tilt</b>. Turn OFF iPhone orientation
-          lock for landscape testing.
-        </p>
-
-        <div className="kpiRow">
-          <div className="kpi">
-            <p className="kpiLabel">Round time</p>
-            <p className="kpiValue">{roundSeconds}s</p>
-          </div>
-          <div className="kpi">
-            <p className="kpiLabel">How to play</p>
-            <p className="kpiValue" style={{ fontSize: 14, fontWeight: 600 }}>
-              Hold the phone to your forehead. Tilt <b>DOWN</b> = Correct. Tilt <b>UP</b> = Pass.
-            </p>
-          </div>
-          <div className="kpi">
-            <p className="kpiLabel">Prompts</p>
-            <p className="kpiValue">{baseWords.length}</p>
-          </div>
-        </div>
-
-        <div className="smallRow">
-          <button className="btn primary" onClick={enableTiltAndStart} disabled={!hasWords}>
-            Enable Tilt
-          </button>
+      <div className="shell">
+        <div className="card">
+          <h1 className="h1">Game</h1>
+          <p className="p">No category selected.</p>
           <button className="btn" onClick={onQuit}>Back</button>
         </div>
-
-        {!hasWords && (
-          <div className="pill danger" style={{ marginTop: 12 }}>
-            No prompts found in this category.
-          </div>
-        )}
-
-        {!permissionGranted && (
-          <div className="hint" style={{ marginTop: 10 }}>
-            If iOS asks for Motion & Orientation access, tap Allow.
-          </div>
-        )}
       </div>
     );
   }
 
-  // RUNNING SCREEN (big word, landscape-friendly)
-  return (
-    <div className="card">
-      <div className="row">
-        <div>
-          <div className="pill">{categoryName}</div>
+  if (!prompts.length) {
+    return (
+      <div className="shell">
+        <div className="card">
+          <h1 className="h1">{category?.name || "Category"}</h1>
+          <p className="p">No prompts found in this category.</p>
+          <button className="btn" onClick={onQuit}>Back</button>
         </div>
-        <div className="pill primary">{secondsLeft}s</div>
       </div>
+    );
+  }
 
-      <div className="bigPromptWrap">
-        <p className="bigPrompt">{currentWord}</p>
-      </div>
+  const currentWord = deck[index] ?? "";
 
-      <p className="hint">
-        Tilt DOWN = Correct • Tilt UP = Pass
-      </p>
+  return (
+    <div className="shell">
+      <div className="card">
+        <div className="row">
+          <div>
+            <h1 className="h1">{category?.name || "Category"}</h1>
+            <p className="p">
+              {stage === "ready"
+                ? "Timer starts only after you tap Enable Tilt. Turn OFF iPhone orientation lock for landscape testing."
+                : "Hold to forehead. Tilt DOWN = Correct. Tilt UP = Pass."}
+            </p>
+          </div>
 
-      {/* Buttons removed per your request while we troubleshoot tilt */}
-      <div className="smallRow" style={{ justifyContent: "center" }}>
-        <button className="btn danger" onClick={() => finishRound("manual")}>
-          End Round
-        </button>
+          <div className="pill">
+            {stage === "playing" ? `${secondsLeft}s` : `${roundSeconds}s`}
+          </div>
+        </div>
+
+        {stage === "ready" && (
+          <>
+            <div className="smallRow" style={{ marginTop: 8 }}>
+              <label className="pill" style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                <input
+                  type="checkbox"
+                  checked={invertTilt}
+                  onChange={(e) => setInvertTilt(e.target.checked)}
+                  style={{ transform: "scale(1.2)" }}
+                />
+                Invert tilt
+              </label>
+            </div>
+
+            <div className="smallRow">
+              <button className="btn primary" onClick={enableTiltAndStart}>
+                Enable Tilt
+              </button>
+              <button className="btn" onClick={onQuit}>
+                Back
+              </button>
+            </div>
+
+            <div className="pill danger" style={{ marginTop: 10 }}>
+              {tiltStatus}
+            </div>
+
+            <div className="pill" style={{ marginTop: 10 }}>
+              Prompts available: {prompts.length}
+            </div>
+          </>
+        )}
+
+        {stage === "playing" && (
+          <>
+            <div className="pill" style={{ marginTop: 10 }}>
+              {tiltStatus}
+            </div>
+
+            <div className="bigPromptWrap" style={{ marginTop: 14 }}>
+              <h2
+                className="bigPrompt"
+                style={{
+                  // Bigger on phones / landscape
+                  fontSize: "clamp(44px, 10vw, 96px)",
+                  padding: "24px 12px",
+                }}
+              >
+                {currentWord}
+              </h2>
+            </div>
+
+            <div className="hint">
+              Keep the phone steady between tilts (return to neutral) so it counts only once.
+            </div>
+
+            <div className="smallRow" style={{ justifyContent: "space-between" }}>
+              <span className="pill good">Correct: {correctCount}</span>
+              <span className="pill danger">Pass: {passCount}</span>
+              <button className="btn" onClick={finishRound}>
+                End Round
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
