@@ -1,6 +1,5 @@
 // src/utils/motion.js
 
-// iOS requires permission for motion/orientation sensors when in Safari / PWA.
 export async function requestMotionPermission() {
   try {
     if (
@@ -10,122 +9,160 @@ export async function requestMotionPermission() {
       const res = await DeviceOrientationEvent.requestPermission();
       return res === "granted";
     }
-    // Non-iOS or older iOS: no prompt needed
     return true;
   } catch {
     return false;
   }
 }
 
-function getScreenAngle() {
-  // iOS Safari often supports window.orientation; modern browsers support screen.orientation.angle
-  let a =
-    (typeof screen !== "undefined" &&
-      screen.orientation &&
-      typeof screen.orientation.angle === "number" &&
-      screen.orientation.angle) ??
-    (typeof window !== "undefined" && typeof window.orientation === "number"
-      ? window.orientation
-      : 0);
-
-  // normalize -90 to 270
-  if (a === -90) a = 270;
-  // normalize into 0/90/180/270 where possible
-  if (a !== 0 && a !== 90 && a !== 180 && a !== 270) a = 0;
-  return a;
-}
-
-function pickAxis(beta, gamma, angle) {
-  // Goal: produce a "forward/back" axis that stays consistent across rotation.
-  // Portrait (0): beta is forward/back
-  // Portrait upside down (180): invert beta
-  // Landscape (90): gamma behaves like forward/back
-  // Landscape (270): invert gamma
-  switch (angle) {
-    case 0:
-      return beta;
-    case 180:
-      return -beta;
-    case 90:
-      return gamma;
-    case 270:
-      return -gamma;
-    default:
-      return beta;
-  }
-}
-
-function clampNumber(n) {
+function validNum(n) {
   return typeof n === "number" && Number.isFinite(n) ? n : null;
 }
 
 /**
- * Start listening for tilt actions.
+ * Calibrates tilt based on the user's actual device + how they hold it.
  *
- * onAction(direction) => direction is "down" or "up"
- * onReady() => called once after baseline calibration
+ * It chooses the axis (beta vs gamma) with the largest delta from baseline,
+ * and records which SIGN corresponds to "tilt down".
  *
- * Options:
- *  thresholdDeg: how far from baseline to count a tilt (larger = less sensitive)
- *  neutralDeg: how close to baseline to "re-arm" after a tilt
- *  cooldownMs: minimum time between actions
- *  smoothing: 0..1 (higher = smoother, less jitter)
- *  invert: flips up/down interpretation (rarely needed, but available)
+ * onCalibrated({ axis: "beta"|"gamma", downSign: 1|-1 })
+ *
+ * Returns { stop() }
  */
-export function startTiltListener({
-  onAction,
-  onReady,
+export function startTiltCalibration({
   thresholdDeg = 28,
-  neutralDeg = 12,
+  neutralDeg = 14,
   cooldownMs = 700,
   smoothing = 0.35,
-  invert = false,
+  onStatus,
+  onCalibrated,
 } = {}) {
-  let baseline = null;
-  let lastActionAt = 0;
-  let waitingForNeutral = false;
+  let baseBeta = null;
+  let baseGamma = null;
 
-  // simple low-pass filter on delta
-  let smoothedDelta = 0;
+  let smBeta = 0;
+  let smGamma = 0;
+
+  let lastActionAt = 0;
+  let waitingForNeutral = true; // after baseline set, require neutral before accepting a tilt
 
   function handler(e) {
-    const beta = clampNumber(e.beta);
-    const gamma = clampNumber(e.gamma);
+    const beta = validNum(e.beta);
+    const gamma = validNum(e.gamma);
     if (beta == null || gamma == null) return;
 
-    const angle = getScreenAngle();
-    const axis = pickAxis(beta, gamma, angle);
-
-    // Calibrate baseline on first good sample after starting
-    if (baseline == null) {
-      baseline = axis;
-      smoothedDelta = 0;
-      waitingForNeutral = true; // require neutral once baseline is set
-      if (typeof onReady === "function") onReady();
+    // Baseline on first good sample
+    if (baseBeta == null || baseGamma == null) {
+      baseBeta = beta;
+      baseGamma = gamma;
+      smBeta = 0;
+      smGamma = 0;
+      waitingForNeutral = true;
+      onStatus?.("Calibrating… hold steady, then tilt DOWN once.");
       return;
     }
 
-    const rawDelta = axis - baseline;
+    const dBeta = beta - baseBeta;
+    const dGamma = gamma - baseGamma;
 
-    // smooth jitter
-    smoothedDelta = smoothedDelta * (1 - smoothing) + rawDelta * smoothing;
+    // smooth
+    smBeta = smBeta * (1 - smoothing) + dBeta * smoothing;
+    smGamma = smGamma * (1 - smoothing) + dGamma * smoothing;
 
-    const now = Date.now();
-
-    // Must return close to baseline before another action counts
+    // must return to neutral before any action
     if (waitingForNeutral) {
-      if (Math.abs(smoothedDelta) <= neutralDeg) {
+      if (Math.abs(smBeta) <= neutralDeg && Math.abs(smGamma) <= neutralDeg) {
         waitingForNeutral = false;
+        onStatus?.("Ready. Tilt DOWN once to calibrate.");
       }
       return;
     }
 
+    const now = Date.now();
     if (now - lastActionAt < cooldownMs) return;
 
-    // Apply invert if requested
-    const d = invert ? -smoothedDelta : smoothedDelta;
+    // Determine dominant axis (the one actually changing)
+    const absB = Math.abs(smBeta);
+    const absG = Math.abs(smGamma);
+    const axis = absB >= absG ? "beta" : "gamma";
+    const delta = axis === "beta" ? smBeta : smGamma;
 
-    // Direction: positive = "down", negative = "up"
+    if (Math.abs(delta) < thresholdDeg) return;
+
+    // We treat the FIRST strong tilt the user does as "DOWN" per instruction.
+    const downSign = delta >= 0 ? 1 : -1;
+
+    lastActionAt = now;
+    waitingForNeutral = true;
+
+    onCalibrated?.({ axis, downSign });
+
+    // stop after calibration
+    window.removeEventListener("deviceorientation", handler, true);
+  }
+
+  window.addEventListener("deviceorientation", handler, true);
+  onStatus?.("Waiting for sensor…");
+
+  return {
+    stop() {
+      window.removeEventListener("deviceorientation", handler, true);
+    },
+  };
+}
+
+/**
+ * Starts tilt listener using a calibrated axis/sign.
+ *
+ * onAction("down"|"up")
+ *
+ * Returns { stop() }
+ */
+export function startTiltListener({
+  axis = "beta", // "beta" | "gamma"
+  downSign = 1, // 1 means +delta = DOWN, -delta = UP. -1 means opposite
+  thresholdDeg = 28,
+  neutralDeg = 14,
+  cooldownMs = 700,
+  smoothing = 0.35,
+  onAction,
+  onStatus,
+} = {}) {
+  let baseline = null;
+  let smDelta = 0;
+  let lastActionAt = 0;
+  let waitingForNeutral = true;
+
+  function handler(e) {
+    const beta = validNum(e.beta);
+    const gamma = validNum(e.gamma);
+    if (beta == null || gamma == null) return;
+
+    const raw = axis === "gamma" ? gamma : beta;
+
+    if (baseline == null) {
+      baseline = raw;
+      smDelta = 0;
+      waitingForNeutral = true;
+      onStatus?.("Tilt enabled. Return to neutral, then tilt.");
+      return;
+    }
+
+    const delta = raw - baseline;
+    smDelta = smDelta * (1 - smoothing) + delta * smoothing;
+
+    // must return to neutral before another action
+    if (waitingForNeutral) {
+      if (Math.abs(smDelta) <= neutralDeg) waitingForNeutral = false;
+      return;
+    }
+
+    const now = Date.now();
+    if (now - lastActionAt < cooldownMs) return;
+
+    // apply calibrated sign
+    const d = smDelta * downSign;
+
     if (d >= thresholdDeg) {
       lastActionAt = now;
       waitingForNeutral = true;
