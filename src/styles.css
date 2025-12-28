@@ -1,5 +1,3 @@
-/* src/styles.css — FULL REPLACEMENT */
-
 :root {
   --bg: #0b0f17;
   --panel: #101827;
@@ -13,7 +11,6 @@
 
 * { box-sizing: border-box; }
 html, body { height: 100%; }
-
 body {
   margin: 0;
   background: radial-gradient(1200px 800px at 20% 10%, #122040 0%, var(--bg) 45%, #070a10 100%);
@@ -21,10 +18,9 @@ body {
   font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
 }
 
-button, input { font: inherit; }
+button, input, select { font: inherit; }
 a { color: var(--accent); }
 
-/* Layout shell */
 .shell {
   min-height: 100dvh;
   padding: env(safe-area-inset-top) 16px env(safe-area-inset-bottom) 16px;
@@ -33,7 +29,6 @@ a { color: var(--accent); }
   justify-content: center;
 }
 
-/* Generic card */
 .card {
   width: min(680px, 100%);
   background: linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02));
@@ -56,19 +51,18 @@ a { color: var(--accent); }
   margin: 0 0 8px 0;
   letter-spacing: 0.2px;
 }
-
 .p {
   margin: 0 0 14px 0;
   color: var(--muted);
   line-height: 1.35;
 }
 
-/* Category grid */
 .grid {
   display: grid;
   grid-template-columns: 1fr;
   gap: 10px;
 }
+
 @media (min-width: 620px) {
   .grid { grid-template-columns: 1fr 1fr; }
 }
@@ -86,9 +80,8 @@ a { color: var(--accent); }
   transform: translateY(-1px);
   border-color: rgba(110,168,255,0.55);
 }
-
 .catTitle { font-weight: 700; margin: 0 0 6px 0; }
-.catMeta  { margin: 0; color: var(--muted); font-size: 13px; }
+.catMeta { margin: 0; color: var(--muted); font-size: 13px; }
 
 .smallRow {
   display: flex;
@@ -133,25 +126,6 @@ a { color: var(--accent); }
 }
 .btn:active { transform: translateY(1px); }
 
-/* Existing prompt styles (kept for compatibility) */
-.bigPromptWrap {
-  margin-top: 14px;
-  border-radius: 18px;
-  border: 1px solid rgba(255,255,255,0.12);
-  background: rgba(0,0,0,0.18);
-  padding: 18px;
-}
-
-.bigPrompt {
-  font-size: clamp(28px, 6vw, 56px);
-  font-weight: 800;
-  letter-spacing: 0.2px;
-  line-height: 1.02;
-  text-align: center;
-  margin: 0;
-  padding: 18px 10px;
-}
-
 .hint {
   text-align: center;
   color: var(--muted);
@@ -159,7 +133,179 @@ a { color: var(--accent); }
   margin-top: 10px;
 }
 
-/* Results KPIs */
+/* Timer dropdown */
+.selectWrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+.select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  padding: 10px 40px 10px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.04);
+  color: var(--text);
+  cursor: pointer;
+}
+.selectWrap::after {
+  content: "▾";
+  position: absolute;
+  right: 14px;
+  color: var(--muted);
+  pointer-events: none;
+  font-size: 14px;
+}
+
+/* ===== New Game Layout (no tilt) ===== */
+
+.gameShell {
+  min-height: 100dvh;
+  width: 100%;
+  padding: env(safe-area-inset-top) 10px env(safe-area-inset-bottom) 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.gameTopBar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(0,0,0,0.18);
+}
+
+.gameTitle { display: flex; flex-direction: column; gap: 4px; }
+.gameCategory { font-weight: 800; font-size: 18px; letter-spacing: 0.2px; }
+.gameSub { color: var(--muted); font-size: 12px; line-height: 1.2; }
+
+.gameMeta { display: flex; align-items: center; gap: 10px; }
+.gameTimer {
+  padding: 8px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.04);
+  font-weight: 800;
+}
+.gameBackBtn { padding: 10px 12px; }
+
+.gameReady {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.gameLayout {
+  flex: 1;
+  display: flex;
+  gap: 10px;
+  align-items: stretch;
+}
+
+/* Side tap zones */
+.sideBtn {
+  cursor: pointer;
+  border-radius: 18px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.04);
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  min-width: 120px;
+}
+
+.sideBtnLabel {
+  font-weight: 900;
+  letter-spacing: 0.6px;
+  font-size: clamp(16px, 2.6vw, 26px);
+  opacity: 0.95;
+}
+
+.sideBtnPass {
+  background: rgba(255,93,93,0.10);
+  border-color: rgba(255,93,93,0.32);
+}
+.sideBtnCorrect {
+  background: rgba(49,208,127,0.10);
+  border-color: rgba(49,208,127,0.32);
+}
+
+.sideBtn:active { transform: translateY(1px); }
+
+/* Center prompt pane */
+.centerPane {
+  flex: 1;
+  border-radius: 18px;
+  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(0,0,0,0.18);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 12px;
+}
+
+.centerWord {
+  text-align: center;
+  font-weight: 950;
+  letter-spacing: 0.2px;
+  line-height: 1.02;
+  font-size: clamp(40px, 6.5vw, 110px);
+  padding: 10px 8px;
+}
+
+.centerStats {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* Landscape: make side zones take ~1/4 each, center gets the rest */
+@media (orientation: landscape) {
+  .gameShell {
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+
+  .sideBtn {
+    width: 24vw;
+    max-width: 360px;
+  }
+
+  .centerWord {
+    font-size: clamp(54px, 7vw, 140px);
+  }
+}
+
+/* Portrait: still usable, but side zones become smaller */
+@media (orientation: portrait) {
+  .gameLayout {
+    flex-direction: column;
+  }
+
+  .sideBtn {
+    width: 100%;
+    min-height: 72px;
+  }
+
+  .centerPane {
+    min-height: 40vh;
+  }
+}
+
+/* Existing results styles (unchanged) */
 .kpiRow {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -177,7 +323,6 @@ a { color: var(--accent); }
 .kpiLabel { color: var(--muted); font-size: 12px; margin: 0 0 6px 0; }
 .kpiValue { margin: 0; font-size: 18px; font-weight: 800; }
 
-/* Results list */
 .list {
   margin: 12px 0 0 0;
   padding: 0;
@@ -205,143 +350,4 @@ a { color: var(--accent); }
   color: var(--muted);
 }
 .badge.good { border-color: rgba(49,208,127,0.5); color: #baf3d7; }
-.badge.bad  { border-color: rgba(255,93,93,0.5); color: #ffd0d0; }
-
-/* -------------------------------------------------------
-   NEW: Setup + Play screen styling for tilt-first flow
-   (used by the replacement Game.jsx I provided)
--------------------------------------------------------- */
-
-/* Setup screen container */
-.gameSetup {
-  width: 100%;
-  max-width: 980px;
-  margin: 0 auto;
-  padding: 20px;
-}
-
-.setupHeader { margin-bottom: 14px; }
-
-.setupTitle {
-  font-size: 28px;
-  font-weight: 700;
-  letter-spacing: 0.2px;
-}
-
-.setupSub {
-  margin-top: 6px;
-  opacity: 0.85;
-  font-size: 14px;
-}
-
-.setupCard {
-  border-radius: 18px;
-  padding: 18px;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  backdrop-filter: blur(12px);
-}
-
-.setupRow {
-  display: grid;
-  grid-template-columns: 140px 1fr;
-  gap: 12px;
-  padding: 10px 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-}
-.setupRow:last-child { border-bottom: none; }
-
-.setupLabel { opacity: 0.8; font-size: 13px; }
-
-.setupValue {
-  font-size: 14px;
-  line-height: 1.35;
-}
-
-.setupButtons {
-  display: flex;
-  gap: 10px;
-  margin-top: 16px;
-  flex-wrap: wrap;
-}
-
-.primaryBtn {
-  padding: 12px 14px;
-  border-radius: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.10);
-  color: inherit;
-  font-weight: 700;
-  cursor: pointer;
-}
-
-.ghostBtn {
-  padding: 12px 14px;
-  border-radius: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.10);
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-}
-
-.setupError {
-  margin-top: 12px;
-  padding: 10px 12px;
-  border-radius: 12px;
-  border: 1px solid rgba(255, 90, 90, 0.35);
-  background: rgba(255, 90, 90, 0.10);
-  font-size: 13px;
-}
-
-/* Play screen (big word for landscape) */
-.playScreen {
-  width: 100%;
-  height: 100%;
-  min-height: calc(100vh - 40px);
-  display: flex;
-  flex-direction: column;
-  padding: 18px;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-}
-
-.topBar {
-  position: fixed;
-  top: 14px;
-  left: 14px;
-  right: 14px;
-  display: flex;
-  justify-content: space-between;
-  pointer-events: none;
-}
-
-/* Note: reusing existing .pill class for category chip */
-.timer {
-  pointer-events: none;
-  padding: 8px 12px;
-  border-radius: 999px;
-  background: rgba(0, 0, 0, 0.25);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  backdrop-filter: blur(10px);
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.bigWord {
-  font-weight: 800;
-  line-height: 1.05;
-  letter-spacing: 0.5px;
-  padding: 0 14px;
-
-  /* Very large word for landscape */
-  font-size: clamp(48px, 9vw, 120px);
-}
-
-/* Slightly different hint style on play screen; safe to reuse name */
-.playScreen .hint {
-  margin-top: 18px;
-  font-size: 14px;
-  opacity: 0.8;
-}
-.playScreen .hint.warn { opacity: 0.95; }
+.badge.bad { border-color: rgba(255,93,93,0.5); color: #ffd0d0; }

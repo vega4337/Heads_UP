@@ -1,51 +1,69 @@
-import React, { useMemo } from "react";
-import ScreenShell from "./ScreenShell.jsx";
+// src/components/Home.jsx
+import React from "react";
 
-export default function Home({ categories, roundSeconds, setRoundSeconds, onStart }) {
-  const list = useMemo(() => Object.entries(categories), [categories]);
+export default function Home({
+  categories,
+  roundSeconds,
+  setRoundSeconds,
+  onStart,
+}) {
+  const entries = categories
+    ? Array.isArray(categories)
+      ? categories
+      : Object.entries(categories).map(([key, val]) => ({
+          key,
+          ...val,
+        }))
+    : [];
 
   return (
-    <ScreenShell
-      title="Heads Up Clone"
-      subtitle="Choose a category, set the timer, then hold the phone to your forehead. Tilt DOWN = Correct, tilt UP = Pass. Buttons also work."
-    >
-      <div className="smallRow">
-        <span className="pill">Round time</span>
-        <input
-          aria-label="Round seconds"
-          type="number"
-          min="15"
-          max="180"
-          step="5"
-          value={roundSeconds}
-          onChange={(e) => setRoundSeconds(Number(e.target.value || 60))}
-          style={{
-            width: 110,
-            padding: "10px 12px",
-            borderRadius: 12,
-            border: "1px solid rgba(255,255,255,0.12)",
-            background: "rgba(255,255,255,0.05)",
-            color: "var(--text)"
-          }}
-        />
-        <span className="pill">seconds</span>
+    <div className="shell">
+      <div className="card">
+        <h1 className="h1">Heads Up Clone</h1>
+        <p className="p">
+          Setup in portrait. Gameplay is best in landscape.
+        </p>
+
+        <div className="smallRow">
+          <span className="pill">Round time</span>
+
+          <label className="selectWrap" aria-label="Round time">
+            <select
+              className="select"
+              value={roundSeconds}
+              onChange={(e) => setRoundSeconds(Number(e.target.value))}
+            >
+              <option value={30}>30 seconds</option>
+              <option value={60}>60 seconds</option>
+            </select>
+          </label>
+        </div>
+
+        <div className="grid" style={{ marginTop: 12 }}>
+          {entries.map((c) => {
+            const count = Array.isArray(c.prompts)
+              ? c.prompts.length
+              : Array.isArray(c.words)
+                ? c.words.length
+                : 0;
+
+            return (
+              <button
+                key={c.key}
+                className="catBtn"
+                onClick={() => onStart(c.key)}
+              >
+                <p className="catTitle">{c.name || c.key}</p>
+                <p className="catMeta">{count} prompts</p>
+              </button>
+            );
+          })}
+        </div>
+
+        <p className="hint" style={{ marginTop: 12 }}>
+          Tip: On iPhone, turn OFF orientation lock for landscape play.
+        </p>
       </div>
-
-      <div style={{ height: 12 }} />
-
-      <div className="grid">
-        {list.map(([key, cat]) => (
-          <button key={key} className="catBtn" onClick={() => onStart(key)}>
-            <div className="catTitle">{cat.name}</div>
-            <p className="catMeta">{cat.words.length} prompts</p>
-          </button>
-        ))}
-      </div>
-
-      <div style={{ height: 14 }} />
-      <p className="p" style={{ marginBottom: 0 }}>
-        iPhone tip: after opening in Safari, use Share → “Add to Home Screen” for fullscreen play.
-      </p>
-    </ScreenShell>
+    </div>
   );
 }

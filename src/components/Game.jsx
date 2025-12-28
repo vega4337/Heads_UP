@@ -1,10 +1,5 @@
 // src/components/Game.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import {
-  requestMotionPermission,
-  startTiltCalibration,
-  startTiltListener,
-} from "../utils/motion.js";
 import { shuffleArray } from "../utils/shuffle.js";
 
 function resolveCategory(categories, categoryKey) {
@@ -38,14 +33,8 @@ export default function Game({
     return Array.isArray(list) ? list : [];
   }, [category]);
 
-  // stages: ready -> calibrating -> playing
+  // stages: ready -> playing
   const [stage, setStage] = useState("ready");
-  const stageRef = useRef(stage);
-  useEffect(() => {
-    stageRef.current = stage;
-  }, [stage]);
-
-  const [tiltStatus, setTiltStatus] = useState("Tilt not enabled.");
   const [secondsLeft, setSecondsLeft] = useState(roundSeconds);
 
   const [deck, setDeck] = useState([]);
@@ -55,18 +44,14 @@ export default function Game({
   const [passCount, setPassCount] = useState(0);
   const [items, setItems] = useState([]); // { word, outcome }
 
-  // refs for sensor callbacks
+  const timerRef = useRef(null);
+
+  // Keep refs in sync so end/finish is accurate
   const deckRef = useRef([]);
   const indexRef = useRef(0);
   const correctRef = useRef(0);
   const passRef = useRef(0);
   const itemsRef = useRef([]);
-
-  const timerRef = useRef(null);
-  const tiltRef = useRef(null);
-  const calibratorRef = useRef(null);
-
-  const calibrationRef = useRef(null); // { axis, downSign }
 
   useEffect(() => {
     deckRef.current = deck;
@@ -91,23 +76,7 @@ export default function Game({
     }
   }
 
-  function stopTilt() {
-    if (tiltRef.current) {
-      tiltRef.current.stop?.();
-      tiltRef.current = null;
-    }
-  }
-
-  function stopCalibration() {
-    if (calibratorRef.current) {
-      calibratorRef.current.stop?.();
-      calibratorRef.current = null;
-    }
-  }
-
   function finishRound() {
-    stopTilt();
-    stopCalibration();
     stopTimer();
 
     const finalItems = itemsRef.current;
@@ -118,8 +87,12 @@ export default function Game({
       total: finalItems.length,
       correctCount: correctRef.current,
       passCount: passRef.current,
-      correctWords: finalItems.filter((x) => x.outcome === "correct").map((x) => x.word),
-      passedWords: finalItems.filter((x) => x.outcome === "pass").map((x) => x.word),
+      correctWords: finalItems
+        .filter((x) => x.outcome === "correct")
+        .map((x) => x.word),
+      passedWords: finalItems
+        .filter((x) => x.outcome === "pass")
+        .map((x) => x.word),
       items: finalItems,
     };
 
@@ -141,8 +114,24 @@ export default function Game({
     }, 1000);
   }
 
+  function startRound() {
+    // reset round stats
+    setCorrectCount(0);
+    setPassCount(0);
+    setItems([]);
+    correctRef.current = 0;
+    passRef.current = 0;
+    itemsRef.current = [];
+
+    setIndex(0);
+    indexRef.current = 0;
+
+    setStage("playing");
+    startTimer();
+  }
+
   function advance(outcome) {
-    if (stageRef.current !== "playing") return;
+    if (stage !== "playing") return;
 
     const d = deckRef.current;
     const i = indexRef.current;
@@ -171,92 +160,37 @@ export default function Game({
     if (nextIndex >= d.length) finishRound();
   }
 
-  async function enableTilt() {
-    if (!deckRef.current.length) return;
-
-    setTiltStatus("Requesting motion permission…");
-    const ok = await requestMotionPermission();
-    if (!ok) {
-      setTiltStatus("Motion permission denied. Enable Motion & Orientation access and reload.");
-      return;
-    }
-
-    stopTilt();
-    stopCalibration();
-    stopTimer();
-
-    setStage("calibrating");
-    setTiltStatus("Calibrating… hold steady, then tilt DOWN once.");
-
-    calibratorRef.current = startTiltCalibration({
-      thresholdDeg: 30,
-      neutralDeg: 16,
-      cooldownMs: 800,
-      smoothing: 0.35,
-      onStatus: (msg) => setTiltStatus(msg),
-      onCalibrated: ({ axis, downSign }) => {
-        calibrationRef.current = { axis, downSign };
-        setTiltStatus(
-          `Calibrated. Axis: ${axis.toUpperCase()}. Tilt DOWN = Correct, Tilt UP = Pass.`
-        );
-
-        // Start actual listener using calibration
-        stopTilt();
-        tiltRef.current = startTiltListener({
-          axis,
-          downSign,
-          thresholdDeg: 30,
-          neutralDeg: 16,
-          cooldownMs: 800,
-          smoothing: 0.35,
-          onStatus: (msg) => setTiltStatus(msg),
-          onAction: (dir) => {
-            if (dir === "down") advance("correct");
-            if (dir === "up") advance("pass");
-          },
-        });
-
-        setStage("playing");
-        startTimer();
-      },
-    });
-  }
-
-  // Reset everything when category changes
+  // Initialize deck on category change
   useEffect(() => {
     const shuffled = shuffleArray(prompts);
     setDeck(shuffled);
+    deckRef.current = shuffled;
+
+    setStage("ready");
+    stopTimer();
+    setSecondsLeft(roundSeconds);
+
     setIndex(0);
+    indexRef.current = 0;
 
     setCorrectCount(0);
     setPassCount(0);
     setItems([]);
-
-    setSecondsLeft(roundSeconds);
-    setStage("ready");
-    setTiltStatus("Tilt not enabled.");
-
-    deckRef.current = shuffled;
-    indexRef.current = 0;
     correctRef.current = 0;
     passRef.current = 0;
     itemsRef.current = [];
-    calibrationRef.current = null;
-
-    stopTilt();
-    stopCalibration();
-    stopTimer();
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [categoryKey]);
 
+  // If roundSeconds changes while on ready screen, reflect it
   useEffect(() => {
-    return () => {
-      stopTilt();
-      stopCalibration();
-      stopTimer();
-    };
+    if (stage === "ready") setSecondsLeft(roundSeconds);
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roundSeconds]);
+
+  useEffect(() => {
+    return () => stopTimer();
   }, []);
 
   if (!category) {
@@ -265,7 +199,9 @@ export default function Game({
         <div className="card">
           <h1 className="h1">Game</h1>
           <p className="p">No category selected.</p>
-          <button className="btn" onClick={onQuit}>Back</button>
+          <button className="btn" onClick={onQuit}>
+            Back
+          </button>
         </div>
       </div>
     );
@@ -277,7 +213,9 @@ export default function Game({
         <div className="card">
           <h1 className="h1">{category?.name || "Category"}</h1>
           <p className="p">No prompts found in this category.</p>
-          <button className="btn" onClick={onQuit}>Back</button>
+          <button className="btn" onClick={onQuit}>
+            Back
+          </button>
         </div>
       </div>
     );
@@ -286,79 +224,74 @@ export default function Game({
   const currentWord = deck[index] ?? "";
 
   return (
-    <div className="shell">
-      <div className="card">
-        <div className="row">
-          <div>
-            <h1 className="h1">{category?.name || "Category"}</h1>
-            <p className="p">
-              {stage === "ready"
-                ? "Timer starts only after you calibrate. Turn OFF iPhone orientation lock for landscape."
-                : "Hold to forehead. Tilt DOWN = Correct. Tilt UP = Pass."}
-            </p>
-          </div>
-          <div className="pill">
-            {stage === "playing" ? `${secondsLeft}s` : `${roundSeconds}s`}
+    <div className="gameShell">
+      <div className="gameTopBar">
+        <div className="gameTitle">
+          <div className="gameCategory">{category?.name || "Category"}</div>
+          <div className="gameSub">
+            Tap zones: LEFT = PASS • RIGHT = CORRECT
           </div>
         </div>
 
-        {stage === "ready" && (
-          <>
+        <div className="gameMeta">
+          <div className="gameTimer">{secondsLeft}s</div>
+          <button className="btn gameBackBtn" onClick={onQuit}>
+            Back
+          </button>
+        </div>
+      </div>
+
+      {stage === "ready" ? (
+        <div className="gameReady">
+          <div className="card" style={{ width: "min(720px, 100%)" }}>
+            <h2 className="h1" style={{ marginBottom: 6 }}>
+              Ready?
+            </h2>
+            <p className="p">
+              Rotate to landscape for best play. Timer starts when you tap Start.
+            </p>
+
             <div className="smallRow">
-              <button className="btn primary" onClick={enableTilt}>
-                Enable Tilt
+              <button className="btn primary" onClick={startRound}>
+                Start
               </button>
               <button className="btn" onClick={onQuit}>
-                Back
+                Change Category
               </button>
             </div>
+          </div>
+        </div>
+      ) : (
+        <div className="gameLayout">
+          <button
+            className="sideBtn sideBtnPass"
+            onClick={() => advance("pass")}
+            aria-label="Pass"
+          >
+            <span className="sideBtnLabel">PASS</span>
+          </button>
 
-            <div className="pill danger" style={{ marginTop: 10 }}>
-              {tiltStatus}
+          <div className="centerPane">
+            <div className="centerWord">{currentWord}</div>
+
+            <div className="centerStats">
+              <span className="pill good">Correct: {correctCount}</span>
+              <span className="pill danger">Pass: {passCount}</span>
+              <button className="btn" onClick={finishRound}>
+                End Round
+              </button>
             </div>
+          </div>
 
-            <div className="pill" style={{ marginTop: 10 }}>
-              Prompts available: {prompts.length}
-            </div>
-          </>
-        )}
-
-        {stage !== "ready" && (
-          <>
-            <div className="pill" style={{ marginTop: 10 }}>
-              {tiltStatus}
-            </div>
-
-            <div className="bigPromptWrap" style={{ marginTop: 14 }}>
-              <h2
-                className="bigPrompt"
-                style={{
-                  fontSize: "clamp(44px, 10vw, 96px)",
-                  padding: "24px 12px",
-                }}
-              >
-                {currentWord}
-              </h2>
-            </div>
-
-            {stage === "playing" && (
-              <>
-                <div className="hint">
-                  Tip: after a tilt, return to neutral before tilting again (prevents double-counting).
-                </div>
-
-                <div className="smallRow" style={{ justifyContent: "space-between" }}>
-                  <span className="pill good">Correct: {correctCount}</span>
-                  <span className="pill danger">Pass: {passCount}</span>
-                  <button className="btn" onClick={finishRound}>
-                    End Round
-                  </button>
-                </div>
-              </>
-            )}
-          </>
-        )}
-      </div>
+          <button
+            className="sideBtn sideBtnCorrect"
+            onClick={() => advance("correct")}
+            aria-label="Correct"
+          >
+            <span className="sideBtnLabel">CORRECT</span>
+          </button>
+        </div>
+      )}
     </div>
   );
 }
