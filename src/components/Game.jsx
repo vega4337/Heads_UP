@@ -1,6 +1,11 @@
 // src/components/Game.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { shuffleArray } from "../utils/shuffle.js";
+import {
+  requestMotionPermission,
+  startTiltCalibration,
+  startTiltListener,
+} from "../utils/motion.js";
 
 function resolveCategory(categories, categoryKey) {
   if (!categories || !categoryKey) return null;
@@ -43,8 +48,11 @@ export default function Game({
   const [correctCount, setCorrectCount] = useState(0);
   const [passCount, setPassCount] = useState(0);
   const [items, setItems] = useState([]); // { word, outcome }
+  const [tiltStatus, setTiltStatus] = useState("Tilt not enabled.");
 
   const timerRef = useRef(null);
+  const tiltCalibrationRef = useRef(null);
+  const tiltListenerRef = useRef(null);
 
   // Keep refs in sync so end/finish is accurate
   const deckRef = useRef([]);
@@ -76,7 +84,19 @@ export default function Game({
     }
   }
 
+  function stopTilt() {
+    if (tiltCalibrationRef.current) {
+      tiltCalibrationRef.current.stop();
+      tiltCalibrationRef.current = null;
+    }
+    if (tiltListenerRef.current) {
+      tiltListenerRef.current.stop();
+      tiltListenerRef.current = null;
+    }
+  }
+
   function finishRound() {
+    stopTilt();
     stopTimer();
 
     const finalItems = itemsRef.current;
@@ -114,7 +134,7 @@ export default function Game({
     }, 1000);
   }
 
-  function startRound() {
+  async function startRound() {
     // reset round stats
     setCorrectCount(0);
     setPassCount(0);
@@ -128,6 +148,33 @@ export default function Game({
 
     setStage("playing");
     startTimer();
+
+    stopTilt();
+    setTiltStatus("Requesting motion permission...");
+
+    const granted = await requestMotionPermission();
+    if (!granted) {
+      setTiltStatus(
+        "Motion permission denied. Enable motion/orientation access to play."
+      );
+      return;
+    }
+
+    tiltCalibrationRef.current = startTiltCalibration({
+      onStatus: setTiltStatus,
+      onCalibrated: ({ axis, downSign }) => {
+        setTiltStatus("Tilt enabled. Down = Correct, Up = Pass.");
+        tiltListenerRef.current = startTiltListener({
+          axis,
+          downSign,
+          onStatus: setTiltStatus,
+          onAction: (action) => {
+            if (action === "down") advance("correct");
+            if (action === "up") advance("pass");
+          },
+        });
+      },
+    });
   }
 
   function advance(outcome) {
@@ -168,6 +215,7 @@ export default function Game({
 
     setStage("ready");
     stopTimer();
+    stopTilt();
     setSecondsLeft(roundSeconds);
 
     setIndex(0);
@@ -190,7 +238,10 @@ export default function Game({
   }, [roundSeconds]);
 
   useEffect(() => {
-    return () => stopTimer();
+    return () => {
+      stopTimer();
+      stopTilt();
+    };
   }, []);
 
   if (!category) {
@@ -229,7 +280,7 @@ export default function Game({
         <div className="gameTitle">
           <div className="gameCategory">{category?.name || "Category"}</div>
           <div className="gameSub">
-            Tap zones: LEFT = PASS • RIGHT = CORRECT
+            Tilt down = Correct. Tilt up = Pass.
           </div>
         </div>
 
@@ -263,14 +314,6 @@ export default function Game({
         </div>
       ) : (
         <div className="gameLayout">
-          <button
-            className="sideBtn sideBtnPass"
-            onClick={() => advance("pass")}
-            aria-label="Pass"
-          >
-            <span className="sideBtnLabel">PASS</span>
-          </button>
-
           <div className="centerPane">
             <div className="centerWord">{currentWord}</div>
 
@@ -281,15 +324,9 @@ export default function Game({
                 End Round
               </button>
             </div>
-          </div>
 
-          <button
-            className="sideBtn sideBtnCorrect"
-            onClick={() => advance("correct")}
-            aria-label="Correct"
-          >
-            <span className="sideBtnLabel">CORRECT</span>
-          </button>
+            <div className="tiltStatus">{tiltStatus}</div>
+          </div>
         </div>
       )}
     </div>
